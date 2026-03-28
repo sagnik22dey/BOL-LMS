@@ -1,0 +1,218 @@
+import { useState, useEffect } from 'react';
+import { Link as RouterLink } from 'react-router-dom';
+import { useCourseStore } from '../../store/courseStore';
+import { useAuthStore } from '../../store/authStore';
+
+const CourseCard = ({ course, isAdmin, onTogglePublish }) => {
+  return (
+    <div className="group bg-surface-container-lowest flex flex-col rounded-3xl overflow-hidden shadow-sm hover:shadow-xl transition-all duration-300 border border-surface-dim hover:-translate-y-1 h-full">
+      {isAdmin ? (
+        <RouterLink to={`/dashboard/learning/${course.id}`} className={`h-40 relative flex items-center justify-center overflow-hidden bg-gradient-to-br from-primary to-primary-container group-hover:opacity-90 transition-opacity`}>
+          <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'radial-gradient(circle at 70% 30%, white 0%, transparent 60%)' }}></div>
+          <span className="text-6xl font-black text-white/20 font-headline select-none pointer-events-none group-hover:scale-110 transition-transform">
+            {course.title.charAt(0).toUpperCase()}
+          </span>
+          
+          <div className="absolute top-4 right-4 text-xs font-bold px-2.5 py-1 rounded-full backdrop-blur-md shadow-sm border border-white/20 text-white font-headline" style={{ backgroundColor: course.is_published ? 'rgba(46, 204, 113, 0.4)' : 'rgba(255, 255, 255, 0.2)'}}>
+            {course.is_published ? 'Published' : 'Draft'}
+          </div>
+        </RouterLink>
+      ) : (
+        <div className={`h-40 relative flex items-center justify-center overflow-hidden bg-gradient-to-br from-primary to-primary-container`}>
+          <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'radial-gradient(circle at 70% 30%, white 0%, transparent 60%)' }}></div>
+          <span className="text-6xl font-black text-white/20 font-headline select-none pointer-events-none group-hover:scale-110 transition-transform">
+            {course.title.charAt(0).toUpperCase()}
+          </span>
+        </div>
+      )}
+
+      <div className="p-6 flex-1 flex flex-col">
+        <h3 className="font-bold text-lg font-headline mb-2 text-on-surface line-clamp-1 group-hover:text-primary transition-colors">
+          {course.title}
+        </h3>
+        <p className="text-sm text-on-surface-variant line-clamp-2 mb-4 flex-1 font-body">
+          {course.description || "No description provided."}
+        </p>
+        
+        <div className="flex items-center gap-1.5 text-on-surface-variant mb-4">
+          <span className="material-symbols-outlined text-[16px]">school</span>
+          <span className="text-[11px] font-bold uppercase tracking-wider">{course.modules?.length || 0} Modules</span>
+        </div>
+
+        <div className="flex items-center gap-2 mt-auto pt-4 border-t border-surface-dim/40">
+          {isAdmin ? (
+            <div className="flex flex-col gap-2 w-full">
+              <div className="flex items-center gap-2">
+                <RouterLink to={`/dashboard/courses/builder/${course.id}`} className="flex-1 text-center py-2 px-3 rounded-xl border border-surface-dim text-sm font-bold text-on-surface-variant hover:bg-surface-container-low transition-colors">
+                  Edit
+                </RouterLink>
+                <button 
+                  onClick={() => onTogglePublish(course)}
+                  className={`flex-1 py-2 px-3 rounded-xl text-sm font-bold transition-colors ${course.is_published ? 'bg-amber-100 text-amber-800 hover:bg-amber-200' : 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'}`}>
+                  {course.is_published ? 'Unpublish' : 'Publish'}
+                </button>
+              </div>
+              <RouterLink to={`/dashboard/learning/${course.id}`} className="w-full text-center py-2 px-3 rounded-xl bg-primary-container text-on-primary-container text-sm font-bold hover:bg-primary hover:text-white transition-colors">
+                Preview Course
+              </RouterLink>
+            </div>
+          ) : (
+            <RouterLink to={`/dashboard/learning/${course.id}`} className="w-full text-center py-2.5 rounded-xl bg-primary text-white text-sm font-bold hover:bg-on-primary-fixed-variant transition-colors font-headline">
+              View Course
+            </RouterLink>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const Courses = () => {
+  const { user } = useAuthStore();
+  const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
+  const { courses, fetchCourses, createCourse, loading, error } = useCourseStore();
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const [formData, setFormData] = useState({ title: '', description: '' });
+  const [formError, setFormError] = useState('');
+
+  useEffect(() => { fetchCourses(); }, [fetchCourses]);
+
+  const handleClose = () => {
+    setOpen(false);
+    setFormData({ title: '', description: '' });
+    setFormError('');
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setFormError('');
+    if (!formData.title || !formData.description) {
+      setFormError('Title and description are required.');
+      return;
+    }
+    const created = await createCourse(formData);
+    if (created) {
+      handleClose();
+      window.location.href = `/dashboard/courses/builder/${created.id}`;
+    } else {
+      setFormError(useCourseStore.getState().error || 'Failed to create course.');
+    }
+  };
+
+  const handleTogglePublish = async (course) => {
+    await useCourseStore.getState().updateCourse(course.id, { ...course, is_published: !course.is_published });
+  };
+
+  const filtered = courses.filter((c) =>
+    c.title.toLowerCase().includes(search.toLowerCase()) ||
+    c.description?.toLowerCase().includes(search.toLowerCase())
+  );
+
+  return (
+    <div className="max-w-7xl mx-auto space-y-8">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+        <div>
+          <h1 className="text-3xl font-extrabold font-headline text-primary tracking-tight">
+            Course Library
+          </h1>
+          <p className="text-on-surface-variant font-body mt-1">
+            {isAdmin ? 'Manage and organize your organization\'s learning content' : 'Browse available courses and continue learning'}
+          </p>
+        </div>
+        
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4 w-full md:w-auto">
+          <div className="relative flex-1 sm:w-64">
+            <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-outline text-[20px]">search</span>
+            <input 
+              type="text" 
+              placeholder="Search courses..." 
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full bg-surface-container-lowest border border-surface-dim rounded-xl py-2.5 pl-10 pr-4 text-sm font-body focus:ring-2 focus:ring-primary focus:border-primary transition-all shadow-sm outline-none"
+            />
+          </div>
+          {isAdmin && (
+            <button 
+              onClick={() => setOpen(true)}
+              className="bg-primary text-white flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl font-bold font-headline transition-transform hover:scale-[0.98] whitespace-nowrap shadow-sm"
+            >
+              <span className="material-symbols-outlined text-[20px]">add</span>
+              New Course
+            </button>
+          )}
+        </div>
+      </div>
+
+      {error && <div className="p-4 bg-error-container text-on-error-container rounded-xl font-body text-sm border border-error/20">{error}</div>}
+
+      {loading && (
+        <div className="w-full bg-surface-dim h-1.5 rounded-full overflow-hidden">
+          <div className="bg-primary h-full w-1/3 animate-[pulse_2s_ease-in-out_infinite]"></div>
+        </div>
+      )}
+
+      {!loading && filtered.length === 0 && (
+        <div className="bg-surface-container-lowest border border-surface-dim rounded-3xl p-16 text-center shadow-sm">
+          <span className="material-symbols-outlined text-6xl text-outline opacity-50 mb-4 block">school</span>
+          <h3 className="text-xl font-extrabold font-headline text-on-surface mb-2">
+            {search ? 'No courses match your search' : (isAdmin ? 'No courses created yet' : 'No courses available')}
+          </h3>
+          <p className="text-on-surface-variant font-body">
+            {isAdmin && !search ? 'Click "New Course" to get started.' : 'Try adjusting your search terms.'}
+          </p>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+        {filtered.map((course) => (
+          <CourseCard key={course.id} course={course} isAdmin={isAdmin} onTogglePublish={handleTogglePublish} />
+        ))}
+      </div>
+
+      {/* Tailwind Modal */}
+      {open && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center px-4 bg-on-surface/40 backdrop-blur-sm transition-opacity">
+          <div className="bg-surface-container-lowest rounded-3xl p-8 w-full max-w-md shadow-2xl animate-[fadeInUp_0.3s_ease-out] border border-surface-dim">
+            <h2 className="text-2xl font-extrabold font-headline text-primary mb-6">Create New Course</h2>
+            <form onSubmit={handleSubmit} className="flex flex-col gap-5">
+              {formError && <div className="p-3 bg-error-container text-on-error-container text-sm rounded-lg border border-error/20 font-body">{formError}</div>}
+              
+              <div className="flex flex-col gap-1.5">
+                <label className="text-sm font-bold text-on-surface font-headline">Course Title</label>
+                <input 
+                  required autoFocus type="text" 
+                  value={formData.title} onChange={(e) => setFormData({...formData, title: e.target.value})}
+                  className="bg-surface-container-low border border-surface-dim rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary focus:border-primary font-body transition-shadow"
+                  placeholder="e.g. Advanced Leadership"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-sm font-bold text-on-surface font-headline">Description</label>
+                <textarea 
+                  required rows="3"
+                  value={formData.description} onChange={(e) => setFormData({...formData, description: e.target.value})}
+                  className="bg-surface-container-low border border-surface-dim rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary focus:border-primary font-body resize-none transition-shadow"
+                  placeholder="Brief overview of the course content..."
+                />
+              </div>
+
+              <div className="flex gap-3 justify-end mt-2">
+                <button type="button" onClick={handleClose} disabled={loading} className="px-5 py-2.5 font-bold font-headline text-on-surface-variant hover:bg-surface-container-low rounded-xl transition-colors">
+                  Cancel
+                </button>
+                <button type="submit" disabled={loading} className="px-6 py-2.5 bg-primary text-white font-bold font-headline rounded-xl hover:bg-on-primary-fixed-variant transition-colors disabled:opacity-50 flex items-center gap-2 shadow-md">
+                  {loading && <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>}
+                  Create Course
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default Courses;
