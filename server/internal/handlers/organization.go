@@ -9,8 +9,7 @@ import (
 	"bol-lms-server/internal/models"
 
 	"github.com/gin-gonic/gin"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
+	"github.com/google/uuid"
 )
 
 func CreateOrganization(c *gin.Context) {
@@ -20,26 +19,30 @@ func CreateOrganization(c *gin.Context) {
 		return
 	}
 
-	org := models.Organization{
-		ID:        primitive.NewObjectID(),
-		Name:      req.Name,
-		Slug:      req.Slug,
-		AdminIDs:  []primitive.ObjectID{},
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	col := db.Collection("organizations")
-	var existing models.Organization
-	if err := col.FindOne(ctx, bson.M{"slug": req.Slug}).Decode(&existing); err == nil {
+	var existingID string
+	if err := db.Pool.QueryRow(ctx, `SELECT id FROM organizations WHERE slug=$1`, req.Slug).Scan(&existingID); err == nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "slug already taken"})
 		return
 	}
 
-	if _, err := col.InsertOne(ctx, org); err != nil {
+	now := time.Now()
+	org := models.Organization{
+		ID:        uuid.New(),
+		Name:      req.Name,
+		Slug:      req.Slug,
+		AdminIDs:  []uuid.UUID{},
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+
+	_, err := db.Pool.Exec(ctx,
+		`INSERT INTO organizations (id, name, slug, created_at, updated_at) VALUES ($1, $2, $3, $4, $5)`,
+		org.ID, org.Name, org.Slug, org.CreatedAt, org.UpdatedAt,
+	)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not create organization"})
 		return
 	}
@@ -50,23 +53,45 @@ func ListOrganizations(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	cursor, err := db.Collection("organizations").Find(ctx, bson.M{})
+	rows, err := db.Pool.Query(ctx,
+		`SELECT id, name, slug, created_at, updated_at FROM organizations`)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not list organizations"})
 		return
 	}
-	defer cursor.Close(ctx)
+	defer rows.Close()
 
-	var orgs []models.Organization
-	if err := cursor.All(ctx, &orgs); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not decode organizations"})
-		return
+	orgs := []models.Organization{}
+	for rows.Next() {
+		var o models.Organization
+		if err := rows.Scan(&o.ID, &o.Name, &o.Slug, &o.CreatedAt, &o.UpdatedAt); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "could not decode organizations"})
+			return
+		}
+		o.AdminIDs = loadOrgAdminIDs(ctx, o.ID)
+		orgs = append(orgs, o)
 	}
 	c.JSON(http.StatusOK, orgs)
 }
 
+func loadOrgAdminIDs(ctx context.Context, orgID uuid.UUID) []uuid.UUID {
+	rows, _ := db.Pool.Query(ctx, `SELECT user_id FROM organization_admins WHERE organization_id=$1`, orgID)
+	ids := []uuid.UUID{}
+	if rows == nil {
+		return ids
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id uuid.UUID
+		if rows.Scan(&id) == nil {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
 func UpdateOrganization(c *gin.Context) {
-	orgID, err := primitive.ObjectIDFromHex(c.Param("id"))
+	orgID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid org id"})
 		return
@@ -81,31 +106,22 @@ func UpdateOrganization(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	col := db.Collection("organizations")
-	
-	// Check if another organization already uses this slug
-	var existing models.Organization
-	err = col.FindOne(ctx, bson.M{"slug": req.Slug, "_id": bson.M{"$ne": orgID}}).Decode(&existing)
-	if err == nil {
+	var existingID string
+	if err := db.Pool.QueryRow(ctx,
+		`SELECT id FROM organizations WHERE slug=$1 AND id!=$2`, req.Slug, orgID).Scan(&existingID); err == nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "slug already taken by another organization"})
 		return
 	}
 
-	update := bson.M{
-		"$set": bson.M{
-			"name":       req.Name,
-			"slug":       req.Slug,
-			"updated_at": time.Now(),
-		},
-	}
-
-	result, err := col.UpdateOne(ctx, bson.M{"_id": orgID}, update)
+	result, err := db.Pool.Exec(ctx,
+		`UPDATE organizations SET name=$1, slug=$2, updated_at=$3 WHERE id=$4`,
+		req.Name, req.Slug, time.Now(), orgID,
+	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not update organization"})
 		return
 	}
-
-	if result.ModifiedCount == 0 && result.MatchedCount == 0 {
+	if result.RowsAffected() == 0 {
 		c.JSON(http.StatusNotFound, gin.H{"error": "organization not found"})
 		return
 	}
@@ -114,7 +130,7 @@ func UpdateOrganization(c *gin.Context) {
 }
 
 func AssignUserToOrg(c *gin.Context) {
-	orgID, err := primitive.ObjectIDFromHex(c.Param("id"))
+	orgID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid org id"})
 		return
@@ -126,7 +142,7 @@ func AssignUserToOrg(c *gin.Context) {
 		return
 	}
 
-	userID, err := primitive.ObjectIDFromHex(req.UserID)
+	userID, err := uuid.Parse(req.UserID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user id"})
 		return
@@ -140,35 +156,26 @@ func AssignUserToOrg(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// Only add to admin_ids if the role is admin
 	if req.Role == models.RoleAdmin {
-		_, err = db.Collection("organizations").UpdateOne(ctx,
-			bson.M{"_id": orgID},
-			bson.M{"$addToSet": bson.M{"admin_ids": userID}},
-		)
+		_, err = db.Pool.Exec(ctx,
+			`INSERT INTO organization_admins (organization_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+			orgID, userID)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "could not assign admin to organization"})
 			return
 		}
 	} else {
-		// Remove from admin_ids if switching from admin to user
-		_, err = db.Collection("organizations").UpdateOne(ctx,
-			bson.M{"_id": orgID},
-			bson.M{"$pull": bson.M{"admin_ids": userID}},
-		)
+		_, err = db.Pool.Exec(ctx,
+			`DELETE FROM organization_admins WHERE organization_id=$1 AND user_id=$2`, orgID, userID)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "could not update organization admins list"})
 			return
 		}
 	}
 
-	_, err = db.Collection("users").UpdateOne(ctx,
-		bson.M{"_id": userID},
-		bson.M{"$set": bson.M{
-			"role":            req.Role,
-			"organization_id": orgID,
-			"updated_at":      time.Now(),
-		}},
+	_, err = db.Pool.Exec(ctx,
+		`UPDATE users SET role=$1, organization_id=$2, updated_at=$3 WHERE id=$4`,
+		req.Role, orgID, time.Now(), userID,
 	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not update user role and org"})
@@ -185,7 +192,7 @@ func GetMyOrganization(c *gin.Context) {
 		return
 	}
 
-	orgID, err := primitive.ObjectIDFromHex(orgIDStr)
+	orgID, err := uuid.Parse(orgIDStr)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid org id"})
 		return
@@ -195,10 +202,12 @@ func GetMyOrganization(c *gin.Context) {
 	defer cancel()
 
 	var org models.Organization
-	if err := db.Collection("organizations").FindOne(ctx, bson.M{"_id": orgID}).Decode(&org); err != nil {
+	row := db.Pool.QueryRow(ctx,
+		`SELECT id, name, slug, created_at, updated_at FROM organizations WHERE id=$1`, orgID)
+	if err := row.Scan(&org.ID, &org.Name, &org.Slug, &org.CreatedAt, &org.UpdatedAt); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "organization not found"})
 		return
 	}
-
+	org.AdminIDs = loadOrgAdminIDs(ctx, org.ID)
 	c.JSON(http.StatusOK, org)
 }

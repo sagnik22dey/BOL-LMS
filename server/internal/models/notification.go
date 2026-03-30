@@ -3,17 +3,17 @@ package models
 import (
 	"time"
 
-	"go.mongodb.org/mongo-driver/bson/primitive"
+	"github.com/google/uuid"
 )
 
 type Notification struct {
-	ID             primitive.ObjectID  `bson:"_id,omitempty" json:"id"`
-	Title          string              `bson:"title" json:"title"`
-	Message        string              `bson:"message" json:"message"`
-	Type           string              `bson:"type" json:"type"` // e.g., "info", "warning", "success"
-	OrganizationID *primitive.ObjectID `bson:"organization_id,omitempty" json:"organization_id,omitempty"` // nil means system-wide (Super Admin)
-	CreatedBy      primitive.ObjectID  `bson:"created_by" json:"created_by"`
-	CreatedAt      time.Time           `bson:"created_at" json:"created_at"`
+	ID             uuid.UUID  `json:"id"`
+	Title          string     `json:"title"`
+	Message        string     `json:"message"`
+	Type           string     `json:"type"`
+	OrganizationID *uuid.UUID `json:"organization_id,omitempty"`
+	CreatedBy      uuid.UUID  `json:"created_by"`
+	CreatedAt      time.Time  `json:"created_at"`
 }
 
 type CreateNotificationRequest struct {

@@ -9,12 +9,47 @@ import (
 	"bol-lms-server/internal/models"
 
 	"github.com/gin-gonic/gin"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
+	"github.com/google/uuid"
 )
 
+func scanGroup(row interface{ Scan(...any) error }) (models.Group, error) {
+	var g models.Group
+	err := row.Scan(&g.ID, &g.OrganizationID, &g.Name, &g.Description, &g.CreatedAt, &g.UpdatedAt)
+	return g, err
+}
+
+func loadGroupRelations(ctx context.Context, g *models.Group) {
+	courseRows, _ := db.Pool.Query(ctx, `SELECT course_id FROM group_courses WHERE group_id=$1`, g.ID)
+	if courseRows != nil {
+		defer courseRows.Close()
+		for courseRows.Next() {
+			var cid uuid.UUID
+			if courseRows.Scan(&cid) == nil {
+				g.CourseIDs = append(g.CourseIDs, cid)
+			}
+		}
+	}
+	if g.CourseIDs == nil {
+		g.CourseIDs = []uuid.UUID{}
+	}
+
+	userRows, _ := db.Pool.Query(ctx, `SELECT user_id FROM group_users WHERE group_id=$1`, g.ID)
+	if userRows != nil {
+		defer userRows.Close()
+		for userRows.Next() {
+			var uid uuid.UUID
+			if userRows.Scan(&uid) == nil {
+				g.UserIDs = append(g.UserIDs, uid)
+			}
+		}
+	}
+	if g.UserIDs == nil {
+		g.UserIDs = []uuid.UUID{}
+	}
+}
+
 func CreateGroup(c *gin.Context) {
-	orgID, err := primitive.ObjectIDFromHex(c.GetString("org_id"))
+	orgID, err := uuid.Parse(c.GetString("org_id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid org id"})
 		return
@@ -26,21 +61,27 @@ func CreateGroup(c *gin.Context) {
 		return
 	}
 
+	now := time.Now()
 	group := models.Group{
-		ID:             primitive.NewObjectID(),
+		ID:             uuid.New(),
 		OrganizationID: orgID,
 		Name:           req.Name,
 		Description:    req.Description,
-		CourseIDs:      []primitive.ObjectID{},
-		UserIDs:        []primitive.ObjectID{},
-		CreatedAt:      time.Now(),
-		UpdatedAt:      time.Now(),
+		CourseIDs:      []uuid.UUID{},
+		UserIDs:        []uuid.UUID{},
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if _, err := db.Collection("groups").InsertOne(ctx, group); err != nil {
+	_, err = db.Pool.Exec(ctx,
+		`INSERT INTO groups (id, organization_id, name, description, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6)`,
+		group.ID, group.OrganizationID, group.Name, group.Description, group.CreatedAt, group.UpdatedAt,
+	)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not create group"})
 		return
 	}
@@ -48,7 +89,7 @@ func CreateGroup(c *gin.Context) {
 }
 
 func ListGroups(c *gin.Context) {
-	orgID, err := primitive.ObjectIDFromHex(c.GetString("org_id"))
+	orgID, err := uuid.Parse(c.GetString("org_id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid org id"})
 		return
@@ -57,26 +98,30 @@ func ListGroups(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	cursor, err := db.Collection("groups").Find(ctx, bson.M{"organization_id": orgID})
+	rows, err := db.Pool.Query(ctx,
+		`SELECT id, organization_id, name, description, created_at, updated_at
+		 FROM groups WHERE organization_id=$1`, orgID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not fetch groups"})
 		return
 	}
-	defer cursor.Close(ctx)
+	defer rows.Close()
 
-	var groups []models.Group
-	if err := cursor.All(ctx, &groups); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not decode groups"})
-		return
-	}
-	if groups == nil {
-		groups = []models.Group{}
+	groups := []models.Group{}
+	for rows.Next() {
+		g, err := scanGroup(rows)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "could not decode groups"})
+			return
+		}
+		loadGroupRelations(ctx, &g)
+		groups = append(groups, g)
 	}
 	c.JSON(http.StatusOK, groups)
 }
 
 func GetGroup(c *gin.Context) {
-	id, err := primitive.ObjectIDFromHex(c.Param("id"))
+	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid group id"})
 		return
@@ -85,16 +130,20 @@ func GetGroup(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	var group models.Group
-	if err := db.Collection("groups").FindOne(ctx, bson.M{"_id": id}).Decode(&group); err != nil {
+	row := db.Pool.QueryRow(ctx,
+		`SELECT id, organization_id, name, description, created_at, updated_at
+		 FROM groups WHERE id=$1`, id)
+	group, err := scanGroup(row)
+	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "group not found"})
 		return
 	}
+	loadGroupRelations(ctx, &group)
 	c.JSON(http.StatusOK, group)
 }
 
 func UpdateGroup(c *gin.Context) {
-	id, err := primitive.ObjectIDFromHex(c.Param("id"))
+	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid group id"})
 		return
@@ -109,15 +158,11 @@ func UpdateGroup(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	update := bson.M{
-		"$set": bson.M{
-			"name":        req.Name,
-			"description": req.Description,
-			"updated_at":  time.Now(),
-		},
-	}
-
-	if _, err := db.Collection("groups").UpdateOne(ctx, bson.M{"_id": id}, update); err != nil {
+	_, err = db.Pool.Exec(ctx,
+		`UPDATE groups SET name=$1, description=$2, updated_at=$3 WHERE id=$4`,
+		req.Name, req.Description, time.Now(), id,
+	)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not update group"})
 		return
 	}
@@ -125,7 +170,7 @@ func UpdateGroup(c *gin.Context) {
 }
 
 func DeleteGroup(c *gin.Context) {
-	id, err := primitive.ObjectIDFromHex(c.Param("id"))
+	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid group id"})
 		return
@@ -134,7 +179,7 @@ func DeleteGroup(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if _, err := db.Collection("groups").DeleteOne(ctx, bson.M{"_id": id}); err != nil {
+	if _, err := db.Pool.Exec(ctx, `DELETE FROM groups WHERE id=$1`, id); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not delete group"})
 		return
 	}
@@ -142,7 +187,7 @@ func DeleteGroup(c *gin.Context) {
 }
 
 func AddUsersToGroup(c *gin.Context) {
-	id, err := primitive.ObjectIDFromHex(c.Param("id"))
+	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid group id"})
 		return
@@ -154,39 +199,30 @@ func AddUsersToGroup(c *gin.Context) {
 		return
 	}
 
-	var objIDs []primitive.ObjectID
-	for _, uid := range req.UserIDs {
-		objID, err := primitive.ObjectIDFromHex(uid)
-		if err == nil {
-			objIDs = append(objIDs, objID)
-		}
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	_, err = db.Collection("groups").UpdateOne(ctx,
-		bson.M{"_id": id},
-		bson.M{
-			"$addToSet": bson.M{"user_ids": bson.M{"$each": objIDs}},
-			"$set":      bson.M{"updated_at": time.Now()},
-		},
-	)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not add users to group"})
-		return
+	for _, uid := range req.UserIDs {
+		userID, err := uuid.Parse(uid)
+		if err != nil {
+			continue
+		}
+		db.Pool.Exec(ctx,
+			`INSERT INTO group_users (group_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+			id, userID)
 	}
+
+	db.Pool.Exec(ctx, `UPDATE groups SET updated_at=$1 WHERE id=$2`, time.Now(), id)
 	c.JSON(http.StatusOK, gin.H{"message": "users added"})
 }
 
 func RemoveUserFromGroup(c *gin.Context) {
-	id, err := primitive.ObjectIDFromHex(c.Param("id"))
+	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid group id"})
 		return
 	}
-
-	userID, err := primitive.ObjectIDFromHex(c.Param("userId"))
+	userID, err := uuid.Parse(c.Param("userId"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user id"})
 		return
@@ -195,22 +231,13 @@ func RemoveUserFromGroup(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	_, err = db.Collection("groups").UpdateOne(ctx,
-		bson.M{"_id": id},
-		bson.M{
-			"$pull": bson.M{"user_ids": userID},
-			"$set":  bson.M{"updated_at": time.Now()},
-		},
-	)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not remove user from group"})
-		return
-	}
+	db.Pool.Exec(ctx, `DELETE FROM group_users WHERE group_id=$1 AND user_id=$2`, id, userID)
+	db.Pool.Exec(ctx, `UPDATE groups SET updated_at=$1 WHERE id=$2`, time.Now(), id)
 	c.JSON(http.StatusOK, gin.H{"message": "user removed"})
 }
 
 func AssignCoursesToGroup(c *gin.Context) {
-	id, err := primitive.ObjectIDFromHex(c.Param("id"))
+	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid group id"})
 		return
@@ -222,39 +249,30 @@ func AssignCoursesToGroup(c *gin.Context) {
 		return
 	}
 
-	var objIDs []primitive.ObjectID
-	for _, cid := range req.CourseIDs {
-		objID, err := primitive.ObjectIDFromHex(cid)
-		if err == nil {
-			objIDs = append(objIDs, objID)
-		}
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	_, err = db.Collection("groups").UpdateOne(ctx,
-		bson.M{"_id": id},
-		bson.M{
-			"$addToSet": bson.M{"course_ids": bson.M{"$each": objIDs}},
-			"$set":      bson.M{"updated_at": time.Now()},
-		},
-	)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not assign courses to group"})
-		return
+	for _, cid := range req.CourseIDs {
+		courseID, err := uuid.Parse(cid)
+		if err != nil {
+			continue
+		}
+		db.Pool.Exec(ctx,
+			`INSERT INTO group_courses (group_id, course_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+			id, courseID)
 	}
+
+	db.Pool.Exec(ctx, `UPDATE groups SET updated_at=$1 WHERE id=$2`, time.Now(), id)
 	c.JSON(http.StatusOK, gin.H{"message": "courses assigned"})
 }
 
 func RemoveCourseFromGroup(c *gin.Context) {
-	id, err := primitive.ObjectIDFromHex(c.Param("id"))
+	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid group id"})
 		return
 	}
-
-	courseID, err := primitive.ObjectIDFromHex(c.Param("courseId"))
+	courseID, err := uuid.Parse(c.Param("courseId"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid course id"})
 		return
@@ -263,23 +281,13 @@ func RemoveCourseFromGroup(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	_, err = db.Collection("groups").UpdateOne(ctx,
-		bson.M{"_id": id},
-		bson.M{
-			"$pull": bson.M{"course_ids": courseID},
-			"$set":  bson.M{"updated_at": time.Now()},
-		},
-	)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not remove course from group"})
-		return
-	}
+	db.Pool.Exec(ctx, `DELETE FROM group_courses WHERE group_id=$1 AND course_id=$2`, id, courseID)
+	db.Pool.Exec(ctx, `UPDATE groups SET updated_at=$1 WHERE id=$2`, time.Now(), id)
 	c.JSON(http.StatusOK, gin.H{"message": "course removed"})
 }
 
-// User Course Assignments logic
 func AssignCourseToUser(c *gin.Context) {
-	userID, err := primitive.ObjectIDFromHex(c.Param("id"))
+	userID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user id"})
 		return
@@ -291,52 +299,33 @@ func AssignCourseToUser(c *gin.Context) {
 		return
 	}
 
-	assignedBy, _ := primitive.ObjectIDFromHex(c.GetString("user_id"))
+	assignedBy, _ := uuid.Parse(c.GetString("user_id"))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	var assignments []interface{}
 	for _, cidStr := range req.CourseIDs {
-		courseID, err := primitive.ObjectIDFromHex(cidStr)
+		courseID, err := uuid.Parse(cidStr)
 		if err != nil {
-			continue // Skip invalid mapping
+			continue
 		}
-
-		// check if already assigned
-		var existing models.UserCourseAssignment
-		err = db.Collection("user_course_assignments").FindOne(ctx, bson.M{"user_id": userID, "course_id": courseID}).Decode(&existing)
-		if err == nil {
-			continue // already assigned
-		}
-
-		assignments = append(assignments, models.UserCourseAssignment{
-			ID:         primitive.NewObjectID(),
-			UserID:     userID,
-			CourseID:   courseID,
-			AssignedBy: assignedBy,
-			AssignedAt: time.Now(),
-		})
-	}
-
-	if len(assignments) > 0 {
-		if _, err := db.Collection("user_course_assignments").InsertMany(ctx, assignments); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "could not assign courses to user"})
-			return
-		}
+		db.Pool.Exec(ctx,
+			`INSERT INTO user_course_assignments (id, user_id, course_id, assigned_by, assigned_at)
+			 VALUES ($1, $2, $3, $4, $5) ON CONFLICT (user_id, course_id) DO NOTHING`,
+			uuid.New(), userID, courseID, assignedBy, time.Now(),
+		)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "courses assigned successfully"})
 }
 
 func RevokeCourseFromUser(c *gin.Context) {
-	userID, err := primitive.ObjectIDFromHex(c.Param("id"))
+	userID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user id"})
 		return
 	}
-
-	courseID, err := primitive.ObjectIDFromHex(c.Param("courseId"))
+	courseID, err := uuid.Parse(c.Param("courseId"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid course id"})
 		return
@@ -345,20 +334,17 @@ func RevokeCourseFromUser(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	_, err = db.Collection("user_course_assignments").DeleteMany(ctx, bson.M{
-		"user_id":   userID,
-		"course_id": courseID,
-	})
+	_, err = db.Pool.Exec(ctx,
+		`DELETE FROM user_course_assignments WHERE user_id=$1 AND course_id=$2`, userID, courseID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not revoke course"})
 		return
 	}
-
 	c.JSON(http.StatusOK, gin.H{"message": "course revoked from user"})
 }
 
 func GetUserIndividualCourses(c *gin.Context) {
-	userID, err := primitive.ObjectIDFromHex(c.Param("id"))
+	userID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user id"})
 		return
@@ -367,22 +353,21 @@ func GetUserIndividualCourses(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	cursor, err := db.Collection("user_course_assignments").Find(ctx, bson.M{"user_id": userID})
+	rows, err := db.Pool.Query(ctx,
+		`SELECT id, user_id, course_id, assigned_by, assigned_at
+		 FROM user_course_assignments WHERE user_id=$1`, userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not fetch user assignments"})
 		return
 	}
-	defer cursor.Close(ctx)
+	defer rows.Close()
 
-	var assignments []models.UserCourseAssignment
-	if err := cursor.All(ctx, &assignments); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not decode user assignments"})
-		return
+	assignments := []models.UserCourseAssignment{}
+	for rows.Next() {
+		var a models.UserCourseAssignment
+		if err := rows.Scan(&a.ID, &a.UserID, &a.CourseID, &a.AssignedBy, &a.AssignedAt); err == nil {
+			assignments = append(assignments, a)
+		}
 	}
-
-	if assignments == nil {
-		assignments = []models.UserCourseAssignment{}
-	}
-
 	c.JSON(http.StatusOK, assignments)
 }

@@ -3,7 +3,7 @@ package models
 import (
 	"time"
 
-	"go.mongodb.org/mongo-driver/bson/primitive"
+	"github.com/google/uuid"
 )
 
 type Role string
@@ -15,15 +15,15 @@ const (
 )
 
 type User struct {
-	ID             primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	Name           string             `bson:"name" json:"name"`
-	Email          string             `bson:"email" json:"email"`
-	PasswordHash   string             `bson:"password_hash" json:"-"`
-	Role           Role               `bson:"role" json:"role"`
-	OrganizationID *primitive.ObjectID `bson:"organization_id,omitempty" json:"organization_id,omitempty"`
-	IsSuspended    bool               `bson:"is_suspended" json:"is_suspended"`
-	CreatedAt      time.Time          `bson:"created_at" json:"created_at"`
-	UpdatedAt      time.Time          `bson:"updated_at" json:"updated_at"`
+	ID             uuid.UUID  `json:"id"`
+	Name           string     `json:"name"`
+	Email          string     `json:"email"`
+	PasswordHash   string     `json:"-"`
+	Role           Role       `json:"role"`
+	OrganizationID *uuid.UUID `json:"organization_id,omitempty"`
+	IsSuspended    bool       `json:"is_suspended"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
 }
 
 type RegisterRequest struct {

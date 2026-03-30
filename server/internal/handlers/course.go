@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"time"
 
@@ -11,12 +12,28 @@ import (
 	"bol-lms-server/internal/storage"
 
 	"github.com/gin-gonic/gin"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
+	"github.com/google/uuid"
 )
 
+func scanCourse(row interface{ Scan(...any) error }) (models.Course, error) {
+	var c models.Course
+	var rawModules []byte
+	err := row.Scan(&c.ID, &c.OrganizationID, &c.Title, &c.Description,
+		&c.ThumbnailKey, &rawModules, &c.IsPublished, &c.CreatedAt, &c.UpdatedAt)
+	if err != nil {
+		return c, err
+	}
+	if len(rawModules) > 0 {
+		_ = json.Unmarshal(rawModules, &c.Modules)
+	}
+	if c.Modules == nil {
+		c.Modules = []models.Module{}
+	}
+	return c, nil
+}
+
 func CreateCourse(c *gin.Context) {
-	orgID, err := primitive.ObjectIDFromHex(c.GetString("org_id"))
+	orgID, err := uuid.Parse(c.GetString("org_id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid org context"})
 		return
@@ -28,21 +45,30 @@ func CreateCourse(c *gin.Context) {
 		return
 	}
 
+	now := time.Now()
 	course := models.Course{
-		ID:             primitive.NewObjectID(),
+		ID:             uuid.New(),
 		OrganizationID: orgID,
 		Title:          req.Title,
 		Description:    req.Description,
 		Modules:        []models.Module{},
 		IsPublished:    false,
-		CreatedAt:      time.Now(),
-		UpdatedAt:      time.Now(),
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
+
+	modulesJSON, _ := json.Marshal(course.Modules)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if _, err := db.Collection("courses").InsertOne(ctx, course); err != nil {
+	_, err = db.Pool.Exec(ctx,
+		`INSERT INTO courses (id, organization_id, title, description, thumbnail_key, modules, is_published, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		course.ID, course.OrganizationID, course.Title, course.Description, course.ThumbnailKey,
+		modulesJSON, course.IsPublished, course.CreatedAt, course.UpdatedAt,
+	)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not create course"})
 		return
 	}
@@ -56,7 +82,7 @@ func ListCourses(c *gin.Context) {
 		return
 	}
 
-	orgID, err := primitive.ObjectIDFromHex(orgIDStr)
+	orgID, err := uuid.Parse(orgIDStr)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid org id"})
 		return
@@ -65,68 +91,48 @@ func ListCourses(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	filter := bson.M{"organization_id": orgID}
-	
-	// If the caller is a user (not an admin/super_admin), only show assigned and published courses
 	role := c.GetString("role")
-	if role == string(models.RoleUser) {
-		userID, _ := primitive.ObjectIDFromHex(c.GetString("user_id"))
-		
-		var assignments []models.UserCourseAssignment
-		cursor, err := db.Collection("user_course_assignments").Find(ctx, bson.M{"user_id": userID})
-		if err == nil {
-			cursor.All(ctx, &assignments)
-			cursor.Close(ctx)
-		}
-
-		var groups []models.Group
-		cursorGroup, errGroup := db.Collection("groups").Find(ctx, bson.M{"user_ids": userID})
-		if errGroup == nil {
-			cursorGroup.All(ctx, &groups)
-			cursorGroup.Close(ctx)
-		}
-		
-		uniqueCourseIDs := make(map[primitive.ObjectID]bool)
-		for _, a := range assignments {
-			uniqueCourseIDs[a.CourseID] = true
-		}
-		for _, g := range groups {
-			for _, cid := range g.CourseIDs {
-				uniqueCourseIDs[cid] = true
-			}
-		}
-
-		var allowedCourseIDs []primitive.ObjectID
-		for cid := range uniqueCourseIDs {
-			allowedCourseIDs = append(allowedCourseIDs, cid)
-		}
-
-		if len(allowedCourseIDs) == 0 {
-			c.JSON(http.StatusOK, []models.Course{})
-			return
-		}
-
-		filter["_id"] = bson.M{"$in": allowedCourseIDs}
-		filter["is_published"] = true
+	var rows interface {
+		Close()
+		Next() bool
+		Scan(...any) error
 	}
 
-	cursor, err := db.Collection("courses").Find(ctx, filter)
+	if role == string(models.RoleUser) {
+		userID, _ := uuid.Parse(c.GetString("user_id"))
+
+		rows, err = db.Pool.Query(ctx,
+			`SELECT DISTINCT c.id, c.organization_id, c.title, c.description, c.thumbnail_key, c.modules, c.is_published, c.created_at, c.updated_at
+			 FROM courses c
+			 WHERE c.organization_id = $1 AND c.is_published = TRUE AND (
+			   c.id IN (SELECT course_id FROM user_course_assignments WHERE user_id = $2)
+			   OR c.id IN (SELECT course_id FROM group_courses WHERE group_id IN (SELECT group_id FROM group_users WHERE user_id = $2))
+			 )`, orgID, userID)
+	} else {
+		rows, err = db.Pool.Query(ctx,
+			`SELECT id, organization_id, title, description, thumbnail_key, modules, is_published, created_at, updated_at
+			 FROM courses WHERE organization_id = $1`, orgID)
+	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not fetch courses"})
 		return
 	}
-	defer cursor.Close(ctx)
+	defer rows.Close()
 
-	var courses []models.Course
-	if err := cursor.All(ctx, &courses); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not decode courses"})
-		return
+	courses := []models.Course{}
+	for rows.Next() {
+		course, err := scanCourse(rows)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "could not decode courses"})
+			return
+		}
+		courses = append(courses, course)
 	}
 	c.JSON(http.StatusOK, courses)
 }
 
 func GetCourse(c *gin.Context) {
-	id, err := primitive.ObjectIDFromHex(c.Param("id"))
+	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid course id"})
 		return
@@ -135,8 +141,11 @@ func GetCourse(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	var course models.Course
-	if err := db.Collection("courses").FindOne(ctx, bson.M{"_id": id}).Decode(&course); err != nil {
+	row := db.Pool.QueryRow(ctx,
+		`SELECT id, organization_id, title, description, thumbnail_key, modules, is_published, created_at, updated_at
+		 FROM courses WHERE id = $1`, id)
+	course, err := scanCourse(row)
+	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "course not found"})
 		return
 	}
@@ -172,12 +181,10 @@ func GeneratePresignGetURL(c *gin.Context) {
 
 	bucket := c.Query("bucket")
 	if bucket == "" {
-		// Default to videos bucket if not specified
 		bucket = config.App.MinioBucketVids
 	}
 
-	// 1 hour expiry for reading
-	expiry := 60 * time.Minute 
+	expiry := 60 * time.Minute
 
 	getURL, err := storage.PresignedGetURL(bucket, objectName, expiry)
 	if err != nil {
@@ -188,7 +195,7 @@ func GeneratePresignGetURL(c *gin.Context) {
 }
 
 func UpdateCourse(c *gin.Context) {
-	id, err := primitive.ObjectIDFromHex(c.Param("id"))
+	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid course id"})
 		return
@@ -201,35 +208,30 @@ func UpdateCourse(c *gin.Context) {
 	}
 
 	for i := range course.Modules {
-		if course.Modules[i].ID.IsZero() {
-			course.Modules[i].ID = primitive.NewObjectID()
+		if course.Modules[i].ID == uuid.Nil {
+			course.Modules[i].ID = uuid.New()
 		}
 		course.Modules[i].Order = i
 		for j := range course.Modules[i].Materials {
-			if course.Modules[i].Materials[j].ID.IsZero() {
-				course.Modules[i].Materials[j].ID = primitive.NewObjectID()
+			if course.Modules[i].Materials[j].ID == uuid.Nil {
+				course.Modules[i].Materials[j].ID = uuid.New()
 			}
 			course.Modules[i].Materials[j].Order = j
 		}
 	}
 
 	course.UpdatedAt = time.Now()
+	modulesJSON, _ := json.Marshal(course.Modules)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	update := bson.M{
-		"$set": bson.M{
-			"title":         course.Title,
-			"description":   course.Description,
-			"thumbnail_key": course.ThumbnailKey,
-			"modules":       course.Modules,
-			"is_published":  course.IsPublished,
-			"updated_at":    course.UpdatedAt,
-		},
-	}
-
-	if _, err := db.Collection("courses").UpdateOne(ctx, bson.M{"_id": id}, update); err != nil {
+	_, err = db.Pool.Exec(ctx,
+		`UPDATE courses SET title=$1, description=$2, thumbnail_key=$3, modules=$4, is_published=$5, updated_at=$6
+		 WHERE id=$7`,
+		course.Title, course.Description, course.ThumbnailKey, modulesJSON, course.IsPublished, course.UpdatedAt, id,
+	)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not update course"})
 		return
 	}
@@ -237,7 +239,7 @@ func UpdateCourse(c *gin.Context) {
 }
 
 func DeleteCourse(c *gin.Context) {
-	id, err := primitive.ObjectIDFromHex(c.Param("id"))
+	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid course id"})
 		return
@@ -246,7 +248,7 @@ func DeleteCourse(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if _, err := db.Collection("courses").DeleteOne(ctx, bson.M{"_id": id}); err != nil {
+	if _, err := db.Pool.Exec(ctx, `DELETE FROM courses WHERE id = $1`, id); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not delete course"})
 		return
 	}

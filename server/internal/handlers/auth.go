@@ -10,8 +10,7 @@ import (
 	"bol-lms-server/internal/models"
 
 	"github.com/gin-gonic/gin"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
+	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -28,30 +27,34 @@ func Register(c *gin.Context) {
 		return
 	}
 
-	// Force all public registrations to RoleUser
-	role := models.RoleUser
-
-	user := models.User{
-		ID:           primitive.NewObjectID(),
-		Name:         req.Name,
-		Email:        req.Email,
-		PasswordHash: string(hash),
-		Role:         role,
-		CreatedAt:    time.Now(),
-		UpdatedAt:    time.Now(),
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	col := db.Collection("users")
-	var existing models.User
-	if err := col.FindOne(ctx, bson.M{"email": req.Email}).Decode(&existing); err == nil {
+	var existingID string
+	err = db.Pool.QueryRow(ctx, `SELECT id FROM users WHERE email = $1`, req.Email).Scan(&existingID)
+	if err == nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "email already registered"})
 		return
 	}
 
-	if _, err := col.InsertOne(ctx, user); err != nil {
+	now := time.Now()
+	user := models.User{
+		ID:           uuid.New(),
+		Name:         req.Name,
+		Email:        req.Email,
+		PasswordHash: string(hash),
+		Role:         models.RoleUser,
+		IsSuspended:  false,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+
+	_, err = db.Pool.Exec(ctx,
+		`INSERT INTO users (id, name, email, password_hash, role, is_suspended, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		user.ID, user.Name, user.Email, user.PasswordHash, user.Role, user.IsSuspended, user.CreatedAt, user.UpdatedAt,
+	)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not create user"})
 		return
 	}
@@ -76,7 +79,11 @@ func Login(c *gin.Context) {
 	defer cancel()
 
 	var user models.User
-	err := db.Collection("users").FindOne(ctx, bson.M{"email": req.Email}).Decode(&user)
+	row := db.Pool.QueryRow(ctx,
+		`SELECT id, name, email, password_hash, role, organization_id, is_suspended, created_at, updated_at
+		 FROM users WHERE email = $1`, req.Email)
+	err := row.Scan(&user.ID, &user.Name, &user.Email, &user.PasswordHash, &user.Role,
+		&user.OrganizationID, &user.IsSuspended, &user.CreatedAt, &user.UpdatedAt)
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid credentials"})
 		return
@@ -97,12 +104,23 @@ func Login(c *gin.Context) {
 }
 
 func Me(c *gin.Context) {
-	userID, _ := primitive.ObjectIDFromHex(c.GetString("user_id"))
+	userIDStr := c.GetString("user_id")
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user id"})
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	var user models.User
-	if err := db.Collection("users").FindOne(ctx, bson.M{"_id": userID}).Decode(&user); err != nil {
+	row := db.Pool.QueryRow(ctx,
+		`SELECT id, name, email, password_hash, role, organization_id, is_suspended, created_at, updated_at
+		 FROM users WHERE id = $1`, userID)
+	err = row.Scan(&user.ID, &user.Name, &user.Email, &user.PasswordHash, &user.Role,
+		&user.OrganizationID, &user.IsSuspended, &user.CreatedAt, &user.UpdatedAt)
+	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
 		return
 	}

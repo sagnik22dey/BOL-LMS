@@ -23,10 +23,10 @@ type Claims struct {
 func GenerateToken(user models.User) (string, error) {
 	orgID := ""
 	if user.OrganizationID != nil {
-		orgID = user.OrganizationID.Hex()
+		orgID = user.OrganizationID.String()
 	}
 	claims := Claims{
-		UserID: user.ID.Hex(),
+		UserID: user.ID.String(),
 		Name:   user.Name,
 		Role:   user.Role,
 		OrgID:  orgID,

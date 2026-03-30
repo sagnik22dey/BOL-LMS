@@ -9,34 +9,33 @@ import (
 	"bol-lms-server/internal/models"
 
 	"github.com/gin-gonic/gin"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
+	"github.com/google/uuid"
 )
 
 type AssignmentDisplay struct {
-	ID        primitive.ObjectID `json:"id"`
-	Title     string             `json:"title"`
-	CourseID  primitive.ObjectID `json:"course_id"`
-	Deadline  *time.Time         `json:"deadline"`
-	Progress  int                `json:"progress"`
-	Submitted bool               `json:"submitted"` // for user
+	ID        uuid.UUID  `json:"id"`
+	Title     string     `json:"title"`
+	CourseID  uuid.UUID  `json:"course_id"`
+	Deadline  *time.Time `json:"deadline"`
+	Progress  int        `json:"progress"`
+	Submitted bool       `json:"submitted"`
 }
 
 func GetDashboardStats(c *gin.Context) {
-	orgID, _ := primitive.ObjectIDFromHex(c.GetString("org_id"))
-	userID, _ := primitive.ObjectIDFromHex(c.GetString("user_id"))
+	orgID, _ := uuid.Parse(c.GetString("org_id"))
+	userID, _ := uuid.Parse(c.GetString("user_id"))
 	role := c.GetString("role")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	if role == string(models.RoleAdmin) || role == string(models.RoleSuperAdmin) {
-		// Admin Stats
-		totalLearners, _ := db.Collection("users").CountDocuments(ctx, bson.M{"organization_id": orgID, "role": "user"})
-		activeCourses, _ := db.Collection("courses").CountDocuments(ctx, bson.M{"organization_id": orgID})
-		
-		totalAssignments, _ := db.Collection("assignments").CountDocuments(ctx, bson.M{"organization_id": orgID})
-		totalSubmissions, _ := db.Collection("assignment_submissions").CountDocuments(ctx, bson.M{"assignment_id": bson.M{"$exists": true}})
+		var totalLearners, activeCourses, totalSubmissions, totalAssignments int64
+
+		db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE organization_id=$1 AND role='user'`, orgID).Scan(&totalLearners)
+		db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM courses WHERE organization_id=$1`, orgID).Scan(&activeCourses)
+		db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM assignments WHERE organization_id=$1`, orgID).Scan(&totalAssignments)
+		db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM assignment_submissions`).Scan(&totalSubmissions)
 
 		completionRate := 0
 		if totalAssignments > 0 && totalLearners > 0 {
@@ -46,25 +45,30 @@ func GetDashboardStats(c *gin.Context) {
 			}
 		}
 
-		// Get recent assignments
-		var assignments []models.Assignment
-		cur, _ := db.Collection("assignments").Find(ctx, bson.M{"organization_id": orgID})
-		cur.All(ctx, &assignments)
+		aRows, _ := db.Pool.Query(ctx,
+			`SELECT id, title, course_id, deadline FROM assignments WHERE organization_id=$1`, orgID)
 
-		var recentAssignments []AssignmentDisplay
-		for _, a := range assignments {
-			subs, _ := db.Collection("assignment_submissions").CountDocuments(ctx, bson.M{"assignment_id": a.ID})
-			prog := 0
-			if totalLearners > 0 {
-				prog = int((float64(subs) / float64(totalLearners)) * 100)
+		recentAssignments := []AssignmentDisplay{}
+		if aRows != nil {
+			defer aRows.Close()
+			for aRows.Next() {
+				var a models.Assignment
+				if aRows.Scan(&a.ID, &a.Title, &a.CourseID, &a.Deadline) == nil {
+					var subs int64
+					db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM assignment_submissions WHERE assignment_id=$1`, a.ID).Scan(&subs)
+					prog := 0
+					if totalLearners > 0 {
+						prog = int((float64(subs) / float64(totalLearners)) * 100)
+					}
+					recentAssignments = append(recentAssignments, AssignmentDisplay{
+						ID:       a.ID,
+						Title:    a.Title,
+						CourseID: a.CourseID,
+						Deadline: a.Deadline,
+						Progress: prog,
+					})
+				}
 			}
-			recentAssignments = append(recentAssignments, AssignmentDisplay{
-				ID:       a.ID,
-				Title:    a.Title,
-				CourseID: a.CourseID,
-				Deadline: a.Deadline,
-				Progress: prog,
-			})
 		}
 
 		c.JSON(http.StatusOK, gin.H{
@@ -75,50 +79,63 @@ func GetDashboardStats(c *gin.Context) {
 			"assignments":    recentAssignments,
 		})
 	} else {
-		// Student Stats
-		var enrollments []models.Enrollment
-		cur, _ := db.Collection("enrollments").Find(ctx, bson.M{"user_id": userID})
-		cur.All(ctx, &enrollments)
+		eRows, _ := db.Pool.Query(ctx,
+			`SELECT id, user_id, course_id, progress, created_at, updated_at FROM enrollments WHERE user_id=$1`, userID)
+
+		enrollments := []models.Enrollment{}
+		courseIDs := []uuid.UUID{}
+		if eRows != nil {
+			defer eRows.Close()
+			for eRows.Next() {
+				var e models.Enrollment
+				if eRows.Scan(&e.ID, &e.UserID, &e.CourseID, &e.Progress, &e.CreatedAt, &e.UpdatedAt) == nil {
+					enrollments = append(enrollments, e)
+					courseIDs = append(courseIDs, e.CourseID)
+				}
+			}
+		}
 
 		enrollCount := len(enrollments)
 		completedCount := 0
-		var totalProgress float64 = 0
-
-		var courseIDs []primitive.ObjectID
+		var totalProgress float64
 		for _, e := range enrollments {
-			courseIDs = append(courseIDs, e.CourseID)
 			totalProgress += e.Progress
 			if e.Progress >= 100 {
 				completedCount++
 			}
 		}
-
 		avgProgress := 0
 		if enrollCount > 0 {
 			avgProgress = int(totalProgress / float64(enrollCount))
 		}
 
-		var recentAssignments []AssignmentDisplay
+		recentAssignments := []AssignmentDisplay{}
 		if len(courseIDs) > 0 {
-			var assignments []models.Assignment
-			curAssn, _ := db.Collection("assignments").Find(ctx, bson.M{"course_id": bson.M{"$in": courseIDs}})
-			curAssn.All(ctx, &assignments)
-
-			for _, a := range assignments {
-				count, _ := db.Collection("assignment_submissions").CountDocuments(ctx, bson.M{"assignment_id": a.ID, "user_id": userID})
-				submitted := count > 0
-				prog := 0
-				if submitted {
-					prog = 100
+			assnRows, _ := db.Pool.Query(ctx,
+				`SELECT id, title, course_id, deadline FROM assignments WHERE course_id = ANY($1)`, courseIDs)
+			if assnRows != nil {
+				defer assnRows.Close()
+				for assnRows.Next() {
+					var a models.Assignment
+					if assnRows.Scan(&a.ID, &a.Title, &a.CourseID, &a.Deadline) == nil {
+						var count int64
+						db.Pool.QueryRow(ctx,
+							`SELECT COUNT(*) FROM assignment_submissions WHERE assignment_id=$1 AND user_id=$2`, a.ID, userID).Scan(&count)
+						submitted := count > 0
+						prog := 0
+						if submitted {
+							prog = 100
+						}
+						recentAssignments = append(recentAssignments, AssignmentDisplay{
+							ID:        a.ID,
+							Title:     a.Title,
+							CourseID:  a.CourseID,
+							Deadline:  a.Deadline,
+							Progress:  prog,
+							Submitted: submitted,
+						})
+					}
 				}
-				recentAssignments = append(recentAssignments, AssignmentDisplay{
-					ID:        a.ID,
-					Title:     a.Title,
-					CourseID:  a.CourseID,
-					Deadline:  a.Deadline,
-					Progress:  prog,
-					Submitted: submitted,
-				})
 			}
 		}
 

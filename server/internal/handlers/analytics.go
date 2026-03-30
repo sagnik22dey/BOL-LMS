@@ -9,17 +9,16 @@ import (
 	"bol-lms-server/internal/models"
 
 	"github.com/gin-gonic/gin"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
+	"github.com/google/uuid"
 )
 
 type AnalyticsOrganization struct {
-	ID        primitive.ObjectID `json:"id"`
-	Name      string             `json:"name"`
-	Slug      string             `json:"slug"`
-	CreatedAt time.Time          `json:"created_at"`
-	Admins    []models.User      `json:"admins"`
-	Users     []models.User      `json:"users"`
+	ID        uuid.UUID    `json:"id"`
+	Name      string       `json:"name"`
+	Slug      string       `json:"slug"`
+	CreatedAt time.Time    `json:"created_at"`
+	Admins    []models.User `json:"admins"`
+	Users     []models.User `json:"users"`
 }
 
 type SuperAdminAnalyticsResponse struct {
@@ -35,90 +34,72 @@ func GetSuperAdminAnalytics(c *gin.Context) {
 
 	var response SuperAdminAnalyticsResponse
 
-	// Get totals
-	orgsCount, err := db.Collection("organizations").CountDocuments(ctx, bson.M{})
-	if err == nil {
-		response.TotalOrganizations = orgsCount
-	}
+	db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM organizations`).Scan(&response.TotalOrganizations)
+	db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE role='admin'`).Scan(&response.TotalAdmins)
+	db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE role='user'`).Scan(&response.TotalUsers)
 
-	adminsCount, err := db.Collection("users").CountDocuments(ctx, bson.M{"role": models.RoleAdmin})
-	if err == nil {
-		response.TotalAdmins = adminsCount
-	}
-
-	usersCount, err := db.Collection("users").CountDocuments(ctx, bson.M{"role": models.RoleUser})
-	if err == nil {
-		response.TotalUsers = usersCount
-	}
-
-	// Fetch organizations
-	orgCursor, err := db.Collection("organizations").Find(ctx, bson.M{})
+	orgRows, err := db.Pool.Query(ctx, `SELECT id, name, slug, created_at FROM organizations`)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not fetch organizations"})
 		return
 	}
-	defer orgCursor.Close(ctx)
+	defer orgRows.Close()
 
-	var orgs []models.Organization
-	if err := orgCursor.All(ctx, &orgs); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not decode organizations"})
-		return
+	type orgRow struct {
+		id        uuid.UUID
+		name      string
+		slug      string
+		createdAt time.Time
+	}
+	var orgs []orgRow
+	for orgRows.Next() {
+		var o orgRow
+		if orgRows.Scan(&o.id, &o.name, &o.slug, &o.createdAt) == nil {
+			orgs = append(orgs, o)
+		}
 	}
 
-	// Fetch all admins and users to map them to organizations efficiently
-	userCursor, err := db.Collection("users").Find(ctx, bson.M{"role": bson.M{"$in": []models.Role{models.RoleAdmin, models.RoleUser}}})
+	userRows, err := db.Pool.Query(ctx,
+		`SELECT id, name, email, password_hash, role, organization_id, is_suspended, created_at, updated_at
+		 FROM users WHERE role IN ('admin', 'user')`)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not fetch users"})
 		return
 	}
-	defer userCursor.Close(ctx)
+	defer userRows.Close()
 
-	var allUsers []models.User
-	if err := userCursor.All(ctx, &allUsers); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not decode users"})
-		return
-	}
-
-	// Group users by organization id
-	adminMap := make(map[string][]models.User)
-	userMap := make(map[string][]models.User)
-
-	for _, u := range allUsers {
-		if u.OrganizationID != nil {
-			orgIDStr := u.OrganizationID.Hex()
-			if u.Role == models.RoleAdmin {
-				adminMap[orgIDStr] = append(adminMap[orgIDStr], u)
-			} else if u.Role == models.RoleUser {
-				userMap[orgIDStr] = append(userMap[orgIDStr], u)
-			}
+	adminMap := make(map[uuid.UUID][]models.User)
+	userMap := make(map[uuid.UUID][]models.User)
+	for userRows.Next() {
+		u, err := scanUser(userRows)
+		if err != nil || u.OrganizationID == nil {
+			continue
+		}
+		if u.Role == models.RoleAdmin {
+			adminMap[*u.OrganizationID] = append(adminMap[*u.OrganizationID], u)
+		} else {
+			userMap[*u.OrganizationID] = append(userMap[*u.OrganizationID], u)
 		}
 	}
 
-	// Build the final array
+	response.Organizations = []AnalyticsOrganization{}
 	for _, o := range orgs {
-		orgIDStr := o.ID.Hex()
-		
-		analyticOrg := AnalyticsOrganization{
-			ID:        o.ID,
-			Name:      o.Name,
-			Slug:      o.Slug,
-			CreatedAt: o.CreatedAt,
-			Admins:    adminMap[orgIDStr],
-			Users:     userMap[orgIDStr],
+		admins := adminMap[o.id]
+		if admins == nil {
+			admins = []models.User{}
 		}
-
-		if analyticOrg.Admins == nil {
-			analyticOrg.Admins = []models.User{}
+		users := userMap[o.id]
+		if users == nil {
+			users = []models.User{}
 		}
-		if analyticOrg.Users == nil {
-			analyticOrg.Users = []models.User{}
-		}
-
-		response.Organizations = append(response.Organizations, analyticOrg)
-	}
-
-	if response.Organizations == nil {
-		response.Organizations = []AnalyticsOrganization{}
+		response.Organizations = append(response.Organizations, AnalyticsOrganization{
+			ID:        o.id,
+			Name:      o.name,
+			Slug:      o.slug,
+			CreatedAt: o.createdAt,
+			Admins:    admins,
+			Users:     users,
+		})
 	}
 
 	c.JSON(http.StatusOK, response)

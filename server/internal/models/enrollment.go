@@ -3,16 +3,16 @@ package models
 import (
 	"time"
 
-	"go.mongodb.org/mongo-driver/bson/primitive"
+	"github.com/google/uuid"
 )
 
 type Enrollment struct {
-	ID        primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	UserID    primitive.ObjectID `bson:"user_id" json:"user_id"`
-	CourseID  primitive.ObjectID `bson:"course_id" json:"course_id"`
-	Progress  float64            `bson:"progress" json:"progress"`
-	CreatedAt time.Time          `bson:"created_at" json:"created_at"`
-	UpdatedAt time.Time          `bson:"updated_at" json:"updated_at"`
+	ID        uuid.UUID `json:"id"`
+	UserID    uuid.UUID `json:"user_id"`
+	CourseID  uuid.UUID `json:"course_id"`
+	Progress  float64   `json:"progress"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 type EnrollRequest struct {
@@ -20,11 +20,11 @@ type EnrollRequest struct {
 }
 
 type UserCourseAssignment struct {
-	ID         primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	UserID     primitive.ObjectID `bson:"user_id" json:"user_id"`
-	CourseID   primitive.ObjectID `bson:"course_id" json:"course_id"`
-	AssignedBy primitive.ObjectID `bson:"assigned_by" json:"assigned_by"` // Admin who assigned
-	AssignedAt time.Time          `bson:"assigned_at" json:"assigned_at"`
+	ID         uuid.UUID `json:"id"`
+	UserID     uuid.UUID `json:"user_id"`
+	CourseID   uuid.UUID `json:"course_id"`
+	AssignedBy uuid.UUID `json:"assigned_by"`
+	AssignedAt time.Time `json:"assigned_at"`
 }
 
 type AssignCourseRequest struct {

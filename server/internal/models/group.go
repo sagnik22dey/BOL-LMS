@@ -3,18 +3,18 @@ package models
 import (
 	"time"
 
-	"go.mongodb.org/mongo-driver/bson/primitive"
+	"github.com/google/uuid"
 )
 
 type Group struct {
-	ID             primitive.ObjectID   `bson:"_id,omitempty" json:"id"`
-	OrganizationID primitive.ObjectID   `bson:"organization_id" json:"organization_id"`
-	Name           string               `bson:"name" json:"name"`
-	Description    string               `bson:"description" json:"description"`
-	CourseIDs      []primitive.ObjectID `bson:"course_ids" json:"course_ids"`
-	UserIDs        []primitive.ObjectID `bson:"user_ids" json:"user_ids"`
-	CreatedAt      time.Time            `bson:"created_at" json:"created_at"`
-	UpdatedAt      time.Time            `bson:"updated_at" json:"updated_at"`
+	ID             uuid.UUID   `json:"id"`
+	OrganizationID uuid.UUID   `json:"organization_id"`
+	Name           string      `json:"name"`
+	Description    string      `json:"description"`
+	CourseIDs      []uuid.UUID `json:"course_ids"`
+	UserIDs        []uuid.UUID `json:"user_ids"`
+	CreatedAt      time.Time   `json:"created_at"`
+	UpdatedAt      time.Time   `json:"updated_at"`
 }
 
 type CreateGroupRequest struct {

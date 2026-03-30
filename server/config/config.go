@@ -12,8 +12,7 @@ type Config struct {
 	Port            string
 	JWTSecret       string
 	JWTExpiryHours  int
-	MongoURI        string
-	MongoDB         string
+	PostgresDSN     string
 	MinioEndpoint   string
 	MinioAccessKey  string
 	MinioSecretKey  string
@@ -36,8 +35,7 @@ func Load() {
 		Port:            getEnv("PORT", "8080"),
 		JWTSecret:       getEnv("JWT_SECRET", "change_me"),
 		JWTExpiryHours:  expiry,
-		MongoURI:        getEnv("MONGO_URI", "mongodb://localhost:27017"),
-		MongoDB:         getEnv("MONGO_DB", "bol_lms"),
+		PostgresDSN:     getEnv("POSTGRES_DSN", ""),
 		MinioEndpoint:   getEnv("MINIO_ENDPOINT", "localhost:9000"),
 		MinioAccessKey:  getEnv("MINIO_ACCESS_KEY", ""),
 		MinioSecretKey:  getEnv("MINIO_SECRET_KEY", ""),

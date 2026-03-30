@@ -1,39 +1,41 @@
 package models
 
 import (
+	"encoding/json"
 	"time"
 
-	"go.mongodb.org/mongo-driver/bson/primitive"
+	"github.com/google/uuid"
 )
 
 type Material struct {
-	ID          primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	Title       string             `bson:"title" json:"title"`
-	Description string             `bson:"description" json:"description"`
-	Type        string             `bson:"type" json:"type"` // video, pdf, ppt, doc, image, text
-	Content     string             `bson:"content,omitempty" json:"content,omitempty"` // For text type
-	FileKey     string             `bson:"file_key,omitempty" json:"file_key,omitempty"` // For MinIO files
-	Duration    int                `bson:"duration_seconds,omitempty" json:"duration_seconds,omitempty"`
-	Order       int                `bson:"order" json:"order"`
+	ID          uuid.UUID `json:"id"`
+	Title       string    `json:"title"`
+	Description string    `json:"description"`
+	Type        string    `json:"type"`
+	Content     string    `json:"content,omitempty"`
+	FileKey     string    `json:"file_key,omitempty"`
+	Duration    int       `json:"duration_seconds,omitempty"`
+	Order       int       `json:"order"`
 }
 
 type Module struct {
-	ID        primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	Title     string             `bson:"title" json:"title"`
-	Order     int                `bson:"order" json:"order"`
-	Materials []Material         `bson:"materials" json:"materials"`
+	ID        uuid.UUID  `json:"id"`
+	Title     string     `json:"title"`
+	Order     int        `json:"order"`
+	Materials []Material `json:"materials"`
 }
 
 type Course struct {
-	ID             primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	OrganizationID primitive.ObjectID `bson:"organization_id" json:"organization_id"`
-	Title          string             `bson:"title" json:"title"`
-	Description    string             `bson:"description" json:"description"`
-	ThumbnailKey   string             `bson:"thumbnail_key" json:"thumbnail_key"`
-	Modules        []Module           `bson:"modules" json:"modules"`
-	IsPublished    bool               `bson:"is_published" json:"is_published"`
-	CreatedAt      time.Time          `bson:"created_at" json:"created_at"`
-	UpdatedAt      time.Time          `bson:"updated_at" json:"updated_at"`
+	ID             uuid.UUID       `json:"id"`
+	OrganizationID uuid.UUID       `json:"organization_id"`
+	Title          string          `json:"title"`
+	Description    string          `json:"description"`
+	ThumbnailKey   string          `json:"thumbnail_key"`
+	Modules        []Module        `json:"modules"`
+	RawModules     json.RawMessage `json:"-"`
+	IsPublished    bool            `json:"is_published"`
+	CreatedAt      time.Time       `json:"created_at"`
+	UpdatedAt      time.Time       `json:"updated_at"`
 }
 
 type CreateCourseRequest struct {

@@ -9,12 +9,11 @@ import (
 	"bol-lms-server/internal/models"
 
 	"github.com/gin-gonic/gin"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
+	"github.com/google/uuid"
 )
 
 func EnrollUser(c *gin.Context) {
-	userID, _ := primitive.ObjectIDFromHex(c.GetString("user_id"))
+	userID, _ := uuid.Parse(c.GetString("user_id"))
 
 	var req models.EnrollRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -22,7 +21,7 @@ func EnrollUser(c *gin.Context) {
 		return
 	}
 
-	courseID, err := primitive.ObjectIDFromHex(req.CourseID)
+	courseID, err := uuid.Parse(req.CourseID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid course_id"})
 		return
@@ -31,32 +30,35 @@ func EnrollUser(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	var existing models.Enrollment
-	err = db.Collection("enrollments").FindOne(ctx, bson.M{
-		"user_id":   userID,
-		"course_id": courseID,
-	}).Decode(&existing)
-	if err == nil {
+	var existingID string
+	if err := db.Pool.QueryRow(ctx,
+		`SELECT id FROM enrollments WHERE user_id=$1 AND course_id=$2`, userID, courseID).Scan(&existingID); err == nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "already enrolled"})
 		return
 	}
 
-	var course models.Course
-	if err := db.Collection("courses").FindOne(ctx, bson.M{"_id": courseID}).Decode(&course); err != nil {
+	var courseCheckID string
+	if err := db.Pool.QueryRow(ctx, `SELECT id FROM courses WHERE id=$1`, courseID).Scan(&courseCheckID); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "course not found"})
 		return
 	}
 
+	now := time.Now()
 	enrollment := models.Enrollment{
-		ID:        primitive.NewObjectID(),
+		ID:        uuid.New(),
 		UserID:    userID,
 		CourseID:  courseID,
 		Progress:  0,
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
+		CreatedAt: now,
+		UpdatedAt: now,
 	}
 
-	if _, err := db.Collection("enrollments").InsertOne(ctx, enrollment); err != nil {
+	_, err = db.Pool.Exec(ctx,
+		`INSERT INTO enrollments (id, user_id, course_id, progress, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6)`,
+		enrollment.ID, enrollment.UserID, enrollment.CourseID, enrollment.Progress, enrollment.CreatedAt, enrollment.UpdatedAt,
+	)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not enroll"})
 		return
 	}
@@ -64,31 +66,28 @@ func EnrollUser(c *gin.Context) {
 }
 
 func ListMyEnrollments(c *gin.Context) {
-	userID, _ := primitive.ObjectIDFromHex(c.GetString("user_id"))
+	userID, _ := uuid.Parse(c.GetString("user_id"))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	cursor, err := db.Collection("enrollments").Find(ctx, bson.M{"user_id": userID})
+	eRows, err := db.Pool.Query(ctx,
+		`SELECT id, user_id, course_id, progress, created_at, updated_at
+		 FROM enrollments WHERE user_id=$1`, userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not fetch enrollments"})
 		return
 	}
-	defer cursor.Close(ctx)
+	defer eRows.Close()
 
-	var enrollments []models.Enrollment
-	if err := cursor.All(ctx, &enrollments); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not decode enrollments"})
-		return
-	}
-
-	if enrollments == nil {
-		enrollments = []models.Enrollment{}
-	}
-
-	courseIDs := make([]primitive.ObjectID, len(enrollments))
-	for i, e := range enrollments {
-		courseIDs[i] = e.CourseID
+	enrollments := []models.Enrollment{}
+	var courseIDs []uuid.UUID
+	for eRows.Next() {
+		var e models.Enrollment
+		if err := eRows.Scan(&e.ID, &e.UserID, &e.CourseID, &e.Progress, &e.CreatedAt, &e.UpdatedAt); err == nil {
+			enrollments = append(enrollments, e)
+			courseIDs = append(courseIDs, e.CourseID)
+		}
 	}
 
 	if len(courseIDs) == 0 {
@@ -96,17 +95,21 @@ func ListMyEnrollments(c *gin.Context) {
 		return
 	}
 
-	courseCursor, err := db.Collection("courses").Find(ctx, bson.M{"_id": bson.M{"$in": courseIDs}})
+	cRows, err := db.Pool.Query(ctx,
+		`SELECT id, organization_id, title, description, thumbnail_key, modules, is_published, created_at, updated_at
+		 FROM courses WHERE id = ANY($1)`, courseIDs)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not fetch courses"})
 		return
 	}
-	defer courseCursor.Close(ctx)
+	defer cRows.Close()
 
-	var courses []models.Course
-	if err := courseCursor.All(ctx, &courses); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not decode courses"})
-		return
+	courses := []models.Course{}
+	for cRows.Next() {
+		course, err := scanCourse(cRows)
+		if err == nil {
+			courses = append(courses, course)
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{"enrollments": enrollments, "courses": courses})

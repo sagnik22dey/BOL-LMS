@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"time"
 
@@ -9,18 +10,51 @@ import (
 	"bol-lms-server/internal/models"
 
 	"github.com/gin-gonic/gin"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
+	"github.com/google/uuid"
 )
 
+func scanSubmission(row interface{ Scan(...any) error }) (models.Submission, error) {
+	var s models.Submission
+	var rawAnswers []byte
+	err := row.Scan(&s.ID, &s.QuizID, &s.ModuleID, &s.UserID, &rawAnswers,
+		&s.Score, &s.MaxScore, &s.IsGraded, &s.GradedBy, &s.StartedAt, &s.SubmittedAt, &s.RetakeAllowed)
+	if err != nil {
+		return s, err
+	}
+	if len(rawAnswers) > 0 {
+		_ = json.Unmarshal(rawAnswers, &s.Answers)
+	}
+	if s.Answers == nil {
+		s.Answers = []models.SubmissionAnswer{}
+	}
+	return s, nil
+}
+
+func scanQuiz(row interface{ Scan(...any) error }) (models.Quiz, error) {
+	var q models.Quiz
+	var rawQuestions []byte
+	err := row.Scan(&q.ID, &q.CourseID, &q.ModuleID, &q.OrganizationID, &q.Title,
+		&q.TimeLimitMins, &rawQuestions, &q.CreatedAt)
+	if err != nil {
+		return q, err
+	}
+	if len(rawQuestions) > 0 {
+		_ = json.Unmarshal(rawQuestions, &q.Questions)
+	}
+	if q.Questions == nil {
+		q.Questions = []models.Question{}
+	}
+	return q, nil
+}
+
 func CreateQuiz(c *gin.Context) {
-	orgID, _ := primitive.ObjectIDFromHex(c.GetString("org_id"))
-	courseID, err := primitive.ObjectIDFromHex(c.Param("id"))
+	orgID, _ := uuid.Parse(c.GetString("org_id"))
+	courseID, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid course id"})
 		return
 	}
-	moduleID, err := primitive.ObjectIDFromHex(c.Param("moduleId"))
+	moduleID, err := uuid.Parse(c.Param("moduleId"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid module id"})
 		return
@@ -32,19 +66,27 @@ func CreateQuiz(c *gin.Context) {
 		return
 	}
 
-	quiz.ID = primitive.NewObjectID()
+	quiz.ID = uuid.New()
 	quiz.CourseID = courseID
 	quiz.ModuleID = moduleID
 	quiz.OrganizationID = orgID
 	quiz.CreatedAt = time.Now()
 	for i := range quiz.Questions {
-		quiz.Questions[i].ID = primitive.NewObjectID()
+		quiz.Questions[i].ID = uuid.New()
 	}
+
+	questionsJSON, _ := json.Marshal(quiz.Questions)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if _, err := db.Collection("quizzes").InsertOne(ctx, quiz); err != nil {
+	_, err = db.Pool.Exec(ctx,
+		`INSERT INTO quizzes (id, course_id, module_id, organization_id, title, time_limit_mins, questions, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		quiz.ID, quiz.CourseID, quiz.ModuleID, quiz.OrganizationID,
+		quiz.Title, quiz.TimeLimitMins, questionsJSON, quiz.CreatedAt,
+	)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not create quiz"})
 		return
 	}
@@ -52,31 +94,35 @@ func CreateQuiz(c *gin.Context) {
 }
 
 func StartQuiz(c *gin.Context) {
-	quizID, err := primitive.ObjectIDFromHex(c.Param("quizId"))
+	quizID, err := uuid.Parse(c.Param("quizId"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid quiz id"})
 		return
 	}
-	userID, _ := primitive.ObjectIDFromHex(c.GetString("user_id"))
+	userID, _ := uuid.Parse(c.GetString("user_id"))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	var quiz models.Quiz
-	if err := db.Collection("quizzes").FindOne(ctx, bson.M{"_id": quizID}).Decode(&quiz); err != nil {
+	quiz, err := scanQuiz(db.Pool.QueryRow(ctx,
+		`SELECT id, course_id, module_id, organization_id, title, time_limit_mins, questions, created_at
+		 FROM quizzes WHERE id = $1`, quizID))
+	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "quiz not found"})
 		return
 	}
 
-	var existing models.Submission
-	err = db.Collection("submissions").FindOne(ctx, bson.M{"quiz_id": quizID, "user_id": userID}).Decode(&existing)
-	if err == nil {
-		if !existing.SubmittedAt.IsZero() && !existing.RetakeAllowed {
+	existing, existErr := scanSubmission(db.Pool.QueryRow(ctx,
+		`SELECT id, quiz_id, module_id, user_id, answers, score, max_score, is_graded, graded_by, started_at, submitted_at, retake_allowed
+		 FROM submissions WHERE quiz_id=$1 AND user_id=$2`, quizID, userID))
+
+	if existErr == nil {
+		if existing.SubmittedAt != nil && !existing.RetakeAllowed {
 			c.JSON(http.StatusForbidden, gin.H{"error": "quiz already submitted"})
 			return
 		}
 		if existing.RetakeAllowed {
-			db.Collection("submissions").DeleteOne(ctx, bson.M{"_id": existing.ID})
+			db.Pool.Exec(ctx, `DELETE FROM submissions WHERE id=$1`, existing.ID)
 		} else {
 			c.JSON(http.StatusOK, existing)
 			return
@@ -84,14 +130,21 @@ func StartQuiz(c *gin.Context) {
 	}
 
 	submission := models.Submission{
-		ID:        primitive.NewObjectID(),
+		ID:        uuid.New(),
 		QuizID:    quizID,
 		ModuleID:  quiz.ModuleID,
 		UserID:    userID,
+		Answers:   []models.SubmissionAnswer{},
 		StartedAt: time.Now(),
 	}
+	answersJSON, _ := json.Marshal(submission.Answers)
 
-	if _, err := db.Collection("submissions").InsertOne(ctx, submission); err != nil {
+	_, err = db.Pool.Exec(ctx,
+		`INSERT INTO submissions (id, quiz_id, module_id, user_id, answers, score, max_score, is_graded, started_at, retake_allowed)
+		 VALUES ($1, $2, $3, $4, $5, 0, 0, FALSE, $6, FALSE)`,
+		submission.ID, submission.QuizID, submission.ModuleID, submission.UserID, answersJSON, submission.StartedAt,
+	)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not start quiz"})
 		return
 	}
@@ -99,12 +152,12 @@ func StartQuiz(c *gin.Context) {
 }
 
 func SubmitQuiz(c *gin.Context) {
-	quizID, err := primitive.ObjectIDFromHex(c.Param("quizId"))
+	quizID, err := uuid.Parse(c.Param("quizId"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid quiz id"})
 		return
 	}
-	userID, _ := primitive.ObjectIDFromHex(c.GetString("user_id"))
+	userID, _ := uuid.Parse(c.GetString("user_id"))
 
 	var payload struct {
 		Answers []models.SubmissionAnswer `json:"answers"`
@@ -117,24 +170,28 @@ func SubmitQuiz(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	var quiz models.Quiz
-	if err := db.Collection("quizzes").FindOne(ctx, bson.M{"_id": quizID}).Decode(&quiz); err != nil {
+	quiz, err := scanQuiz(db.Pool.QueryRow(ctx,
+		`SELECT id, course_id, module_id, organization_id, title, time_limit_mins, questions, created_at
+		 FROM quizzes WHERE id = $1`, quizID))
+	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "quiz not found"})
 		return
 	}
 
-	var submission models.Submission
-	if err := db.Collection("submissions").FindOne(ctx, bson.M{"quiz_id": quizID, "user_id": userID}).Decode(&submission); err != nil {
+	submission, err := scanSubmission(db.Pool.QueryRow(ctx,
+		`SELECT id, quiz_id, module_id, user_id, answers, score, max_score, is_graded, graded_by, started_at, submitted_at, retake_allowed
+		 FROM submissions WHERE quiz_id=$1 AND user_id=$2`, quizID, userID))
+	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "no active quiz session found, please start quiz first"})
 		return
 	}
 
-	if !submission.SubmittedAt.IsZero() && !submission.RetakeAllowed {
+	if submission.SubmittedAt != nil && !submission.RetakeAllowed {
 		c.JSON(http.StatusForbidden, gin.H{"error": "quiz already submitted"})
 		return
 	}
 
-	questionMap := make(map[primitive.ObjectID]models.Question)
+	questionMap := make(map[uuid.UUID]models.Question)
 	totalMax := 0
 	for _, q := range quiz.Questions {
 		questionMap[q.ID] = q
@@ -177,27 +234,28 @@ func SubmitQuiz(c *gin.Context) {
 		}
 	}
 
-	update := bson.M{
-		"$set": bson.M{
-			"answers":        payload.Answers,
-			"score":          score,
-			"max_score":      totalMax,
-			"submitted_at":   time.Now(),
-			"retake_allowed": false,
-		},
-	}
+	answersJSON, _ := json.Marshal(payload.Answers)
+	now := time.Now()
 
-	if _, err := db.Collection("submissions").UpdateOne(ctx, bson.M{"_id": submission.ID}, update); err != nil {
+	_, err = db.Pool.Exec(ctx,
+		`UPDATE submissions SET answers=$1, score=$2, max_score=$3, submitted_at=$4, retake_allowed=FALSE WHERE id=$5`,
+		answersJSON, score, totalMax, now, submission.ID,
+	)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not save submission"})
 		return
 	}
 
-	db.Collection("submissions").FindOne(ctx, bson.M{"_id": submission.ID}).Decode(&submission)
+	submission.Answers = payload.Answers
+	submission.Score = score
+	submission.MaxScore = totalMax
+	submission.SubmittedAt = &now
+	submission.RetakeAllowed = false
 	c.JSON(http.StatusOK, submission)
 }
 
 func ListSubmissions(c *gin.Context) {
-	quizID, err := primitive.ObjectIDFromHex(c.Param("quizId"))
+	quizID, err := uuid.Parse(c.Param("quizId"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid quiz id"})
 		return
@@ -206,25 +264,32 @@ func ListSubmissions(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	cursor, err := db.Collection("submissions").Find(ctx, bson.M{"quiz_id": quizID})
+	rows, err := db.Pool.Query(ctx,
+		`SELECT id, quiz_id, module_id, user_id, answers, score, max_score, is_graded, graded_by, started_at, submitted_at, retake_allowed
+		 FROM submissions WHERE quiz_id = $1`, quizID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not fetch submissions"})
 		return
 	}
-	defer cursor.Close(ctx)
+	defer rows.Close()
 
-	var subs []models.Submission
-	cursor.All(ctx, &subs)
+	subs := []models.Submission{}
+	for rows.Next() {
+		s, err := scanSubmission(rows)
+		if err == nil {
+			subs = append(subs, s)
+		}
+	}
 	c.JSON(http.StatusOK, subs)
 }
 
 func UnlockQuizRetake(c *gin.Context) {
-	quizID, err := primitive.ObjectIDFromHex(c.Param("quizId"))
+	quizID, err := uuid.Parse(c.Param("quizId"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid quiz id"})
 		return
 	}
-	userID, err := primitive.ObjectIDFromHex(c.Param("userId"))
+	userID, err := uuid.Parse(c.Param("userId"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user id"})
 		return
@@ -233,18 +298,17 @@ func UnlockQuizRetake(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	update := bson.M{"$set": bson.M{"retake_allowed": true}}
-	_, err = db.Collection("submissions").UpdateOne(ctx, bson.M{"quiz_id": quizID, "user_id": userID}, update)
+	_, err = db.Pool.Exec(ctx,
+		`UPDATE submissions SET retake_allowed=TRUE WHERE quiz_id=$1 AND user_id=$2`, quizID, userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not unlock retake"})
 		return
 	}
-
 	c.JSON(http.StatusOK, gin.H{"message": "retake unlocked"})
 }
 
 func GetQuiz(c *gin.Context) {
-	quizID, err := primitive.ObjectIDFromHex(c.Param("quizId"))
+	quizID, err := uuid.Parse(c.Param("quizId"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid quiz id"})
 		return
@@ -255,18 +319,21 @@ func GetQuiz(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	var quiz models.Quiz
-	if err := db.Collection("quizzes").FindOne(ctx, bson.M{"_id": quizID}).Decode(&quiz); err != nil {
+	quiz, err := scanQuiz(db.Pool.QueryRow(ctx,
+		`SELECT id, course_id, module_id, organization_id, title, time_limit_mins, questions, created_at
+		 FROM quizzes WHERE id = $1`, quizID))
+	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "quiz not found"})
 		return
 	}
 
 	if role != string(models.RoleAdmin) && role != string(models.RoleSuperAdmin) {
-		userID, _ := primitive.ObjectIDFromHex(c.GetString("user_id"))
-		var existing models.Submission
-		err := db.Collection("submissions").FindOne(ctx, bson.M{"quiz_id": quizID, "user_id": userID}).Decode(&existing)
-		
-		hasSubmitted := err == nil && !existing.SubmittedAt.IsZero() && !existing.RetakeAllowed
+		userID, _ := uuid.Parse(c.GetString("user_id"))
+		existing, existErr := scanSubmission(db.Pool.QueryRow(ctx,
+			`SELECT id, quiz_id, module_id, user_id, answers, score, max_score, is_graded, graded_by, started_at, submitted_at, retake_allowed
+			 FROM submissions WHERE quiz_id=$1 AND user_id=$2`, quizID, userID))
+
+		hasSubmitted := existErr == nil && existing.SubmittedAt != nil && !existing.RetakeAllowed
 
 		if !hasSubmitted {
 			for i := range quiz.Questions {
@@ -282,22 +349,22 @@ func GetQuiz(c *gin.Context) {
 }
 
 func GetMyQuizSubmission(c *gin.Context) {
-	quizID, err := primitive.ObjectIDFromHex(c.Param("quizId"))
+	quizID, err := uuid.Parse(c.Param("quizId"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid quiz id"})
 		return
 	}
-	userID, _ := primitive.ObjectIDFromHex(c.GetString("user_id"))
+	userID, _ := uuid.Parse(c.GetString("user_id"))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	var existing models.Submission
-	err = db.Collection("submissions").FindOne(ctx, bson.M{"quiz_id": quizID, "user_id": userID}).Decode(&existing)
+	existing, err := scanSubmission(db.Pool.QueryRow(ctx,
+		`SELECT id, quiz_id, module_id, user_id, answers, score, max_score, is_graded, graded_by, started_at, submitted_at, retake_allowed
+		 FROM submissions WHERE quiz_id=$1 AND user_id=$2`, quizID, userID))
 	if err != nil {
 		c.JSON(http.StatusOK, nil)
 		return
 	}
-
 	c.JSON(http.StatusOK, existing)
 }

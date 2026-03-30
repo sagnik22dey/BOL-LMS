@@ -9,8 +9,7 @@ import (
 	"bol-lms-server/internal/models"
 
 	"github.com/gin-gonic/gin"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
+	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -28,7 +27,7 @@ func CreateAdmin(c *gin.Context) {
 		return
 	}
 
-	orgID, err := primitive.ObjectIDFromHex(req.OrganizationID)
+	orgID, err := uuid.Parse(req.OrganizationID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid organization id"})
 		return
@@ -40,29 +39,34 @@ func CreateAdmin(c *gin.Context) {
 		return
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var existingID string
+	if err := db.Pool.QueryRow(ctx, `SELECT id FROM users WHERE email = $1`, req.Email).Scan(&existingID); err == nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "email already registered"})
+		return
+	}
+
+	now := time.Now()
 	user := models.User{
-		ID:             primitive.NewObjectID(),
+		ID:             uuid.New(),
 		Name:           req.Name,
 		Email:          req.Email,
 		PasswordHash:   string(hash),
 		Role:           models.RoleAdmin,
 		OrganizationID: &orgID,
 		IsSuspended:    false,
-		CreatedAt:      time.Now(),
-		UpdatedAt:      time.Now(),
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	col := db.Collection("users")
-	var existing models.User
-	if err := col.FindOne(ctx, bson.M{"email": req.Email}).Decode(&existing); err == nil {
-		c.JSON(http.StatusConflict, gin.H{"error": "email already registered"})
-		return
-	}
-
-	if _, err := col.InsertOne(ctx, user); err != nil {
+	_, err = db.Pool.Exec(ctx,
+		`INSERT INTO users (id, name, email, password_hash, role, organization_id, is_suspended, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		user.ID, user.Name, user.Email, user.PasswordHash, user.Role, user.OrganizationID, user.IsSuspended, user.CreatedAt, user.UpdatedAt,
+	)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not create admin"})
 		return
 	}
@@ -83,7 +87,7 @@ func CreateOrganizationUser(c *gin.Context) {
 		return
 	}
 
-	orgID, err := primitive.ObjectIDFromHex(orgIDStr)
+	orgID, err := uuid.Parse(orgIDStr)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "invalid admin organization"})
 		return
@@ -101,34 +105,46 @@ func CreateOrganizationUser(c *gin.Context) {
 		return
 	}
 
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var existingID string
+	if err := db.Pool.QueryRow(ctx, `SELECT id FROM users WHERE email = $1`, req.Email).Scan(&existingID); err == nil {
+		c.JSON(http.StatusConflict, gin.H{"error": "email already registered"})
+		return
+	}
+
+	now := time.Now()
 	user := models.User{
-		ID:             primitive.NewObjectID(),
+		ID:             uuid.New(),
 		Name:           req.Name,
 		Email:          req.Email,
 		PasswordHash:   string(hash),
 		Role:           models.RoleUser,
 		OrganizationID: &orgID,
 		IsSuspended:    false,
-		CreatedAt:      time.Now(),
-		UpdatedAt:      time.Now(),
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	col := db.Collection("users")
-	var existing models.User
-	if err := col.FindOne(ctx, bson.M{"email": req.Email}).Decode(&existing); err == nil {
-		c.JSON(http.StatusConflict, gin.H{"error": "email already registered"})
-		return
-	}
-
-	if _, err := col.InsertOne(ctx, user); err != nil {
+	_, err = db.Pool.Exec(ctx,
+		`INSERT INTO users (id, name, email, password_hash, role, organization_id, is_suspended, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		user.ID, user.Name, user.Email, user.PasswordHash, user.Role, user.OrganizationID, user.IsSuspended, user.CreatedAt, user.UpdatedAt,
+	)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not create user"})
 		return
 	}
 
 	c.JSON(http.StatusCreated, user)
+}
+
+func scanUser(rows interface{ Scan(...any) error }) (models.User, error) {
+	var u models.User
+	err := rows.Scan(&u.ID, &u.Name, &u.Email, &u.PasswordHash, &u.Role,
+		&u.OrganizationID, &u.IsSuspended, &u.CreatedAt, &u.UpdatedAt)
+	return u, err
 }
 
 func GetOrganizationUsers(c *gin.Context) {
@@ -138,7 +154,7 @@ func GetOrganizationUsers(c *gin.Context) {
 		return
 	}
 
-	orgID, err := primitive.ObjectIDFromHex(orgIDStr)
+	orgID, err := uuid.Parse(orgIDStr)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "invalid admin organization"})
 		return
@@ -147,23 +163,24 @@ func GetOrganizationUsers(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	cursor, err := db.Collection("users").Find(ctx, bson.M{"organization_id": orgID, "role": models.RoleUser})
+	rows, err := db.Pool.Query(ctx,
+		`SELECT id, name, email, password_hash, role, organization_id, is_suspended, created_at, updated_at
+		 FROM users WHERE organization_id = $1 AND role = 'user'`, orgID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not fetch organization users"})
 		return
 	}
-	defer cursor.Close(ctx)
+	defer rows.Close()
 
-	var users []models.User
-	if err := cursor.All(ctx, &users); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not decode users"})
-		return
+	users := []models.User{}
+	for rows.Next() {
+		u, err := scanUser(rows)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "could not decode users"})
+			return
+		}
+		users = append(users, u)
 	}
-
-	if users == nil {
-		users = []models.User{}
-	}
-
 	c.JSON(http.StatusOK, users)
 }
 
@@ -171,23 +188,24 @@ func GetSuperAdminsUsers(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	cursor, err := db.Collection("users").Find(ctx, bson.M{"role": bson.M{"$in": []models.Role{models.RoleAdmin, models.RoleUser}}})
+	rows, err := db.Pool.Query(ctx,
+		`SELECT id, name, email, password_hash, role, organization_id, is_suspended, created_at, updated_at
+		 FROM users WHERE role IN ('admin', 'user')`)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not fetch users"})
 		return
 	}
-	defer cursor.Close(ctx)
+	defer rows.Close()
 
-	var users []models.User
-	if err := cursor.All(ctx, &users); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not decode users"})
-		return
+	users := []models.User{}
+	for rows.Next() {
+		u, err := scanUser(rows)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "could not decode users"})
+			return
+		}
+		users = append(users, u)
 	}
-
-	if users == nil {
-		users = []models.User{}
-	}
-
 	c.JSON(http.StatusOK, users)
 }
 
@@ -195,68 +213,58 @@ func GetUnassignedUsers(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// Find users that are not superadmins and don't have an organization
-	filter := bson.M{
-		"role": bson.M{"$ne": models.RoleSuperAdmin},
-		"$or": []bson.M{
-			{"organization_id": nil},
-			{"organization_id": bson.M{"$exists": false}},
-		},
-	}
-
-	cursor, err := db.Collection("users").Find(ctx, filter)
+	rows, err := db.Pool.Query(ctx,
+		`SELECT id, name, email, password_hash, role, organization_id, is_suspended, created_at, updated_at
+		 FROM users WHERE role != 'super_admin' AND organization_id IS NULL`)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not fetch unassigned users"})
 		return
 	}
-	defer cursor.Close(ctx)
+	defer rows.Close()
 
-	var users []models.User
-	if err := cursor.All(ctx, &users); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not decode users"})
-		return
+	users := []models.User{}
+	for rows.Next() {
+		u, err := scanUser(rows)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "could not decode users"})
+			return
+		}
+		users = append(users, u)
 	}
-
-	if users == nil {
-		users = []models.User{}
-	}
-
 	c.JSON(http.StatusOK, users)
 }
 
 func DeleteUser(c *gin.Context) {
-	paramID := c.Param("id")
-	id, err := primitive.ObjectIDFromHex(paramID)
+	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user id: " + paramID})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user id: " + c.Param("id")})
 		return
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// 1. Get user to be deleted for org check
 	var userToDel models.User
-	if err := db.Collection("users").FindOne(ctx, bson.M{"_id": id}).Decode(&userToDel); err != nil {
+	row := db.Pool.QueryRow(ctx,
+		`SELECT id, name, email, password_hash, role, organization_id, is_suspended, created_at, updated_at
+		 FROM users WHERE id = $1`, id)
+	if err := row.Scan(&userToDel.ID, &userToDel.Name, &userToDel.Email, &userToDel.PasswordHash,
+		&userToDel.Role, &userToDel.OrganizationID, &userToDel.IsSuspended, &userToDel.CreatedAt, &userToDel.UpdatedAt); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
 		return
 	}
 
-	// 2. Permission check
 	callerRole := c.GetString("role")
 	callerOrgID := c.GetString("org_id")
 
 	if callerRole != string(models.RoleSuperAdmin) {
-		// Admin can only delete users in their own organization
-		if userToDel.OrganizationID == nil || userToDel.OrganizationID.Hex() != callerOrgID {
+		if userToDel.OrganizationID == nil || userToDel.OrganizationID.String() != callerOrgID {
 			c.JSON(http.StatusForbidden, gin.H{"error": "you can only delete users in your own organization"})
 			return
 		}
 	}
 
-	// 3. Delete
-	_, err = db.Collection("users").DeleteOne(ctx, bson.M{"_id": id})
-	if err != nil {
+	if _, err = db.Pool.Exec(ctx, `DELETE FROM users WHERE id = $1`, id); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "database error during deletion"})
 		return
 	}
@@ -265,10 +273,9 @@ func DeleteUser(c *gin.Context) {
 }
 
 func SuspendUser(c *gin.Context) {
-	paramID := c.Param("id")
-	id, err := primitive.ObjectIDFromHex(paramID)
+	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user id: " + paramID})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user id: " + c.Param("id")})
 		return
 	}
 
@@ -276,24 +283,29 @@ func SuspendUser(c *gin.Context) {
 	defer cancel()
 
 	var userToToggle models.User
-	if err := db.Collection("users").FindOne(ctx, bson.M{"_id": id}).Decode(&userToToggle); err != nil {
+	row := db.Pool.QueryRow(ctx,
+		`SELECT id, name, email, password_hash, role, organization_id, is_suspended, created_at, updated_at
+		 FROM users WHERE id = $1`, id)
+	if err := row.Scan(&userToToggle.ID, &userToToggle.Name, &userToToggle.Email, &userToToggle.PasswordHash,
+		&userToToggle.Role, &userToToggle.OrganizationID, &userToToggle.IsSuspended, &userToToggle.CreatedAt, &userToToggle.UpdatedAt); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
 		return
 	}
 
-	// Permission check
 	callerRole := c.GetString("role")
 	callerOrgID := c.GetString("org_id")
 
 	if callerRole != string(models.RoleSuperAdmin) {
-		if userToToggle.OrganizationID == nil || userToToggle.OrganizationID.Hex() != callerOrgID {
+		if userToToggle.OrganizationID == nil || userToToggle.OrganizationID.String() != callerOrgID {
 			c.JSON(http.StatusForbidden, gin.H{"error": "you can only manage users in your own organization"})
 			return
 		}
 	}
 
-	update := bson.M{"$set": bson.M{"is_suspended": !userToToggle.IsSuspended, "updated_at": time.Now()}}
-	_, err = db.Collection("users").UpdateOne(ctx, bson.M{"_id": id}, update)
+	_, err = db.Pool.Exec(ctx,
+		`UPDATE users SET is_suspended = $1, updated_at = $2 WHERE id = $3`,
+		!userToToggle.IsSuspended, time.Now(), id,
+	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "database error during update"})
 		return

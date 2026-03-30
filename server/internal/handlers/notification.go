@@ -9,9 +9,7 @@ import (
 	"bol-lms-server/internal/models"
 
 	"github.com/gin-gonic/gin"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	"github.com/google/uuid"
 )
 
 func CreateNotification(c *gin.Context) {
@@ -21,15 +19,14 @@ func CreateNotification(c *gin.Context) {
 		return
 	}
 
-	userIDStr := c.GetString("user_id")
-	userID, err := primitive.ObjectIDFromHex(userIDStr)
+	userID, err := uuid.Parse(c.GetString("user_id"))
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 		return
 	}
 
 	role := c.GetString("role")
-	var orgIDPtr *primitive.ObjectID
+	var orgIDPtr *uuid.UUID
 
 	if role != string(models.RoleSuperAdmin) {
 		orgIDStr := c.GetString("org_id")
@@ -37,13 +34,12 @@ func CreateNotification(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "admin not associated with an organization"})
 			return
 		}
-		orgID, _ := primitive.ObjectIDFromHex(orgIDStr)
+		orgID, _ := uuid.Parse(orgIDStr)
 		orgIDPtr = &orgID
 	}
-	// Super admins leave orgIDPtr = nil to broadcast system-wide
 
 	notification := models.Notification{
-		ID:             primitive.NewObjectID(),
+		ID:             uuid.New(),
 		Title:          req.Title,
 		Message:        req.Message,
 		Type:           req.Type,
@@ -55,7 +51,13 @@ func CreateNotification(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if _, err := db.Collection("notifications").InsertOne(ctx, notification); err != nil {
+	_, err = db.Pool.Exec(ctx,
+		`INSERT INTO notifications (id, title, message, type, organization_id, created_by, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		notification.ID, notification.Title, notification.Message, notification.Type,
+		notification.OrganizationID, notification.CreatedBy, notification.CreatedAt,
+	)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not create notification"})
 		return
 	}
@@ -65,55 +67,49 @@ func CreateNotification(c *gin.Context) {
 
 func GetLatestNotifications(c *gin.Context) {
 	role := c.GetString("role")
-	
-	filter := bson.M{}
-
-	if role != string(models.RoleSuperAdmin) {
-		orgIDStr := c.GetString("org_id")
-		if orgIDStr != "" {
-			orgID, _ := primitive.ObjectIDFromHex(orgIDStr)
-			// Users/Admins see system-wide announcements (orgId nil or non-existent) AND their own org's announcements
-			filter = bson.M{
-				"$or": []bson.M{
-					{"organization_id": orgID},
-					{"organization_id": nil},
-					{"organization_id": bson.M{"$exists": false}},
-				},
-			}
-		} else {
-			// User without an org yet, they only see system-wide
-			filter = bson.M{
-				"$or": []bson.M{
-					{"organization_id": nil},
-					{"organization_id": bson.M{"$exists": false}},
-				},
-			}
-		}
-	} // Super admins see all notifications right now, or we could change this to just see system-wide. Let's show all for Super Admin.
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	findOptions := options.Find()
-	findOptions.SetSort(bson.D{{Key: "created_at", Value: -1}}) // Sort by newest first
-	findOptions.SetLimit(20) // Limit to latest 20 notifications
+	var rows interface {
+		Close()
+		Next() bool
+		Scan(...any) error
+	}
+	var err error
 
-	cursor, err := db.Collection("notifications").Find(ctx, filter, findOptions)
+	if role == string(models.RoleSuperAdmin) {
+		rows, err = db.Pool.Query(ctx,
+			`SELECT id, title, message, type, organization_id, created_by, created_at
+			 FROM notifications ORDER BY created_at DESC LIMIT 20`)
+	} else {
+		orgIDStr := c.GetString("org_id")
+		if orgIDStr != "" {
+			orgID, _ := uuid.Parse(orgIDStr)
+			rows, err = db.Pool.Query(ctx,
+				`SELECT id, title, message, type, organization_id, created_by, created_at
+				 FROM notifications
+				 WHERE organization_id IS NULL OR organization_id=$1
+				 ORDER BY created_at DESC LIMIT 20`, orgID)
+		} else {
+			rows, err = db.Pool.Query(ctx,
+				`SELECT id, title, message, type, organization_id, created_by, created_at
+				 FROM notifications WHERE organization_id IS NULL
+				 ORDER BY created_at DESC LIMIT 20`)
+		}
+	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not fetch notifications"})
 		return
 	}
-	defer cursor.Close(ctx)
+	defer rows.Close()
 
-	var notifications []models.Notification
-	if err := cursor.All(ctx, &notifications); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not decode notifications"})
-		return
+	notifications := []models.Notification{}
+	for rows.Next() {
+		var n models.Notification
+		if err := rows.Scan(&n.ID, &n.Title, &n.Message, &n.Type, &n.OrganizationID, &n.CreatedBy, &n.CreatedAt); err == nil {
+			notifications = append(notifications, n)
+		}
 	}
-
-	if notifications == nil {
-		notifications = []models.Notification{}
-	}
-
 	c.JSON(http.StatusOK, notifications)
 }
