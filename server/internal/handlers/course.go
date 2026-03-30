@@ -19,7 +19,8 @@ func scanCourse(row interface{ Scan(...any) error }) (models.Course, error) {
 	var c models.Course
 	var rawModules []byte
 	err := row.Scan(&c.ID, &c.OrganizationID, &c.Title, &c.Description,
-		&c.ThumbnailKey, &rawModules, &c.IsPublished, &c.CreatedAt, &c.UpdatedAt)
+		&c.ThumbnailKey, &rawModules, &c.IsPublished, &c.IsPublic,
+		&c.Price, &c.Currency, &c.ValidityDays, &c.CreatedAt, &c.UpdatedAt)
 	if err != nil {
 		return c, err
 	}
@@ -45,14 +46,23 @@ func CreateCourse(c *gin.Context) {
 		return
 	}
 
+	currency := req.Currency
+	if currency == "" {
+		currency = "INR"
+	}
+
 	now := time.Now()
 	course := models.Course{
 		ID:             uuid.New(),
 		OrganizationID: orgID,
 		Title:          req.Title,
 		Description:    req.Description,
+		Price:          req.Price,
+		Currency:       currency,
+		ValidityDays:   req.ValidityDays,
 		Modules:        []models.Module{},
 		IsPublished:    false,
+		IsPublic:       false,
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}
@@ -63,10 +73,10 @@ func CreateCourse(c *gin.Context) {
 	defer cancel()
 
 	_, err = db.Pool.Exec(ctx,
-		`INSERT INTO courses (id, organization_id, title, description, thumbnail_key, modules, is_published, created_at, updated_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		`INSERT INTO courses (id, organization_id, title, description, thumbnail_key, modules, is_published, is_public, price, currency, validity_days, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
 		course.ID, course.OrganizationID, course.Title, course.Description, course.ThumbnailKey,
-		modulesJSON, course.IsPublished, course.CreatedAt, course.UpdatedAt,
+		modulesJSON, course.IsPublished, course.IsPublic, course.Price, course.Currency, course.ValidityDays, course.CreatedAt, course.UpdatedAt,
 	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not create course"})
@@ -77,42 +87,48 @@ func CreateCourse(c *gin.Context) {
 
 func ListCourses(c *gin.Context) {
 	orgIDStr := c.GetString("org_id")
-	if orgIDStr == "" {
-		c.JSON(http.StatusOK, []models.Course{})
-		return
-	}
-
-	orgID, err := uuid.Parse(orgIDStr)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid org id"})
-		return
+	role := c.GetString("role")
+	
+	var orgID uuid.UUID
+	if orgIDStr != "" {
+		var err error
+		orgID, err = uuid.Parse(orgIDStr)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid org id"})
+			return
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	role := c.GetString("role")
 	var rows interface {
 		Close()
 		Next() bool
 		Scan(...any) error
 	}
+	var err error
 
 	if role == string(models.RoleUser) {
-		userID, _ := uuid.Parse(c.GetString("user_id"))
-
+		// All users see published public courses + courses from their specific organization
 		rows, err = db.Pool.Query(ctx,
-			`SELECT DISTINCT c.id, c.organization_id, c.title, c.description, c.thumbnail_key, c.modules, c.is_published, c.created_at, c.updated_at
+			`SELECT DISTINCT c.id, c.organization_id, c.title, c.description, c.thumbnail_key, c.modules, c.is_published, c.is_public, c.price, c.currency, c.validity_days, c.created_at, c.updated_at
 			 FROM courses c
-			 WHERE c.organization_id = $1 AND c.is_published = TRUE AND (
-			   c.id IN (SELECT course_id FROM user_course_assignments WHERE user_id = $2)
-			   OR c.id IN (SELECT course_id FROM group_courses WHERE group_id IN (SELECT group_id FROM group_users WHERE user_id = $2))
-			 )`, orgID, userID)
-	} else {
+			 WHERE c.is_published = TRUE AND (
+			   c.is_public = TRUE OR c.organization_id = $1
+			 )`, orgID)
+	} else if role == string(models.RoleSuperAdmin) && orgIDStr == "" {
+		// Super Admin with no specific org context sees everything
 		rows, err = db.Pool.Query(ctx,
-			`SELECT id, organization_id, title, description, thumbnail_key, modules, is_published, created_at, updated_at
+			`SELECT id, organization_id, title, description, thumbnail_key, modules, is_published, is_public, price, currency, validity_days, created_at, updated_at
+			 FROM courses`)
+	} else {
+		// Admin or SuperAdmin with org context: see all courses in that org
+		rows, err = db.Pool.Query(ctx,
+			`SELECT id, organization_id, title, description, thumbnail_key, modules, is_published, is_public, price, currency, validity_days, created_at, updated_at
 			 FROM courses WHERE organization_id = $1`, orgID)
 	}
+
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not fetch courses"})
 		return
@@ -142,7 +158,7 @@ func GetCourse(c *gin.Context) {
 	defer cancel()
 
 	row := db.Pool.QueryRow(ctx,
-		`SELECT id, organization_id, title, description, thumbnail_key, modules, is_published, created_at, updated_at
+		`SELECT id, organization_id, title, description, thumbnail_key, modules, is_published, is_public, price, currency, validity_days, created_at, updated_at
 		 FROM courses WHERE id = $1`, id)
 	course, err := scanCourse(row)
 	if err != nil {
@@ -227,9 +243,9 @@ func UpdateCourse(c *gin.Context) {
 	defer cancel()
 
 	_, err = db.Pool.Exec(ctx,
-		`UPDATE courses SET title=$1, description=$2, thumbnail_key=$3, modules=$4, is_published=$5, updated_at=$6
-		 WHERE id=$7`,
-		course.Title, course.Description, course.ThumbnailKey, modulesJSON, course.IsPublished, course.UpdatedAt, id,
+		`UPDATE courses SET title=$1, description=$2, thumbnail_key=$3, modules=$4, is_published=$5, is_public=$6, price=$7, currency=$8, validity_days=$9, updated_at=$10
+		 WHERE id=$11`,
+		course.Title, course.Description, course.ThumbnailKey, modulesJSON, course.IsPublished, course.IsPublic, course.Price, course.Currency, course.ValidityDays, course.UpdatedAt, id,
 	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not update course"})

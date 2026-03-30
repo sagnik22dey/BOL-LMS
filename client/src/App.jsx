@@ -12,8 +12,8 @@ import Login from './pages/Login';
 import Register from './pages/Register';
 import DashboardHome from './pages/DashboardHome';
 
-import { Organizations, Courses, CourseBuilder, Users, Groups, Analytics, AssessmentStatus } from './pages/admin';
-import { MyLearning, CourseView } from './pages/learning';
+import { Organizations, Courses, CourseBuilder, Users, CourseBundles, Analytics, AssessmentStatus } from './pages/admin';
+import { MyLearning, CourseView, Cart } from './pages/learning';
 
 import { useEffect } from 'react';
 import { useAuthStore } from './store/authStore';
@@ -54,7 +54,7 @@ function App() {
                 <Route element={<ProtectedRoute allowedRoles={['admin']} />}>
                   <Route path="/dashboard/courses/builder/:courseId?" element={<CourseBuilder />} />
                   <Route path="/dashboard/courses/:courseId/assessments" element={<AssessmentStatus />} />
-                  <Route path="/dashboard/groups" element={<Groups />} />
+                  <Route path="/dashboard/course-bundles" element={<CourseBundles />} />
                 </Route>
 
                {/* Shared Admin/SuperAdmin Routes */}
@@ -71,6 +71,7 @@ function App() {
                 <Route element={<ProtectedRoute />}>
                   <Route path="/dashboard/learning" element={<MyLearning />} />
                   <Route path="/dashboard/learning/:courseId" element={<CourseView />} />
+                  <Route path="/dashboard/cart" element={<Cart />} />
                 </Route>
              </Route>
           </Route>

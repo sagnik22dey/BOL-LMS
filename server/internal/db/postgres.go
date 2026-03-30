@@ -62,11 +62,14 @@ func migrate() {
 		thumbnail_key TEXT NOT NULL DEFAULT '',
 		modules JSONB NOT NULL DEFAULT '[]',
 		is_published BOOLEAN NOT NULL DEFAULT FALSE,
+		is_public BOOLEAN NOT NULL DEFAULT FALSE,
 		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 	);
 
-	CREATE TABLE IF NOT EXISTS groups (
+	DROP TABLE IF EXISTS group_users, group_courses, groups CASCADE;
+
+	CREATE TABLE IF NOT EXISTS course_bundles (
 		id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
 		organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
 		name TEXT NOT NULL,
@@ -75,16 +78,16 @@ func migrate() {
 		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 	);
 
-	CREATE TABLE IF NOT EXISTS group_courses (
-		group_id UUID REFERENCES groups(id) ON DELETE CASCADE,
+	CREATE TABLE IF NOT EXISTS course_bundle_courses (
+		bundle_id UUID REFERENCES course_bundles(id) ON DELETE CASCADE,
 		course_id UUID REFERENCES courses(id) ON DELETE CASCADE,
-		PRIMARY KEY (group_id, course_id)
+		PRIMARY KEY (bundle_id, course_id)
 	);
 
-	CREATE TABLE IF NOT EXISTS group_users (
-		group_id UUID REFERENCES groups(id) ON DELETE CASCADE,
+	CREATE TABLE IF NOT EXISTS course_bundle_users (
+		bundle_id UUID REFERENCES course_bundles(id) ON DELETE CASCADE,
 		user_id UUID REFERENCES users(id) ON DELETE CASCADE,
-		PRIMARY KEY (group_id, user_id)
+		PRIMARY KEY (bundle_id, user_id)
 	);
 
 	CREATE TABLE IF NOT EXISTS enrollments (
@@ -172,10 +175,66 @@ func migrate() {
 		assigned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 		UNIQUE(user_id, course_id)
 	);
+	CREATE TABLE IF NOT EXISTS carts (
+		id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		UNIQUE(user_id)
+	);
+
+	CREATE TABLE IF NOT EXISTS cart_items (
+		id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		cart_id UUID NOT NULL REFERENCES carts(id) ON DELETE CASCADE,
+		item_type TEXT NOT NULL, 
+		item_id UUID NOT NULL,
+		added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		UNIQUE(cart_id, item_type, item_id)
+	);
+
+	CREATE TABLE IF NOT EXISTS orders (
+		id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		total_amount INTEGER NOT NULL DEFAULT 0,
+		currency TEXT NOT NULL DEFAULT 'INR',
+		status TEXT NOT NULL DEFAULT 'pending', 
+		payment_id TEXT, 
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	);
+
+	CREATE TABLE IF NOT EXISTS order_items (
+		id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		order_id UUID NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+		item_type TEXT NOT NULL, 
+		item_id UUID NOT NULL,
+		price INTEGER NOT NULL DEFAULT 0,
+		currency TEXT NOT NULL DEFAULT 'INR',
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	);
 	`
 
 	if _, err := Pool.Exec(context.Background(), schema); err != nil {
 		log.Fatalf("Schema migration failed: %v", err)
 	}
+
+	// Safely add new columns to existing deployments
+	alterSchema := `
+	ALTER TABLE courses ADD COLUMN IF NOT EXISTS is_public BOOLEAN NOT NULL DEFAULT FALSE;
+	ALTER TABLE courses ADD COLUMN IF NOT EXISTS price INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE courses ADD COLUMN IF NOT EXISTS currency TEXT NOT NULL DEFAULT 'INR';
+	ALTER TABLE courses ADD COLUMN IF NOT EXISTS validity_days INTEGER;
+
+	ALTER TABLE course_bundles ADD COLUMN IF NOT EXISTS price INTEGER NOT NULL DEFAULT 0;
+	ALTER TABLE course_bundles ADD COLUMN IF NOT EXISTS currency TEXT NOT NULL DEFAULT 'INR';
+	ALTER TABLE course_bundles ADD COLUMN IF NOT EXISTS validity_days INTEGER;
+
+	ALTER TABLE user_course_assignments ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+	ALTER TABLE course_bundle_users ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+	`
+	if _, err := Pool.Exec(context.Background(), alterSchema); err != nil {
+		log.Fatalf("Alter schema failed: %v", err)
+	}
+
 	log.Println("Database schema migrated successfully")
 }

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import axios from 'axios';
+import api from '../../api/axios';
 import { useAuthStore } from '../../store/authStore';
 
 const StatCard = ({ title, value, icon, bg, color }) => (
@@ -107,7 +107,7 @@ const Analytics = () => {
     const fetch = async () => {
       try {
         setLoading(true);
-        const res = await axios.get('http://localhost:8080/api/admin/super/analytics', { headers: { Authorization: `Bearer ${token}` } });
+        const res = await api.get('/api/admin/super/analytics');
         setData(res.data);
         setError(null);
       } catch { setError('Failed to load analytics.'); }

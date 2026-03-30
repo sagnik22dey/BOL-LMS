@@ -1,9 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAuthStore } from '../store/authStore';
 import NotificationsFeed from '../components/NotificationsFeed';
-import axios from 'axios';
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080/api';
+import api from '../api/axios';
 
 const StatCard = ({ icon, label, value, color, change }) => (
   <div className="bg-[var(--surface-lowest)] rounded-2xl p-5 shadow-[var(--shadow-sm)] flex flex-col gap-3">
@@ -51,7 +49,7 @@ const DashboardHome = () => {
   useEffect(() => {
     const fetchStats = async () => {
       try {
-        const res = await axios.get(`${API_URL}/dashboard/stats`, { withCredentials: true });
+        const res = await api.get('/api/dashboard/stats');
         setStats(res.data);
       } catch (err) {
         console.error('Failed to fetch dashboard stats:', err);

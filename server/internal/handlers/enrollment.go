@@ -96,7 +96,7 @@ func ListMyEnrollments(c *gin.Context) {
 	}
 
 	cRows, err := db.Pool.Query(ctx,
-		`SELECT id, organization_id, title, description, thumbnail_key, modules, is_published, created_at, updated_at
+		`SELECT id, organization_id, title, description, thumbnail_key, modules, is_published, is_public, price, currency, validity_days, created_at, updated_at
 		 FROM courses WHERE id = ANY($1)`, courseIDs)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not fetch courses"})

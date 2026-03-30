@@ -2,10 +2,12 @@ import { useState, useEffect, useRef } from 'react';
 import { Outlet, useNavigate, useLocation, Link as RouterLink } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import { useOrgStore } from '../store/orgStore';
+import useCartStore from '../store/cartStore';
 
 const DashboardLayout = () => {
   const { user, logout } = useAuthStore();
   const { fetchMyOrg } = useOrgStore();
+  const { cart, fetchCart } = useCartStore();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -20,6 +22,12 @@ const DashboardLayout = () => {
       fetchMyOrg().then(setMyOrg);
     }
   }, [user, fetchMyOrg]);
+
+  useEffect(() => {
+    if (user && user.role !== 'super_admin') {
+      fetchCart();
+    }
+  }, [user, fetchCart]);
 
   // Click outside to close avatar menu
   useEffect(() => {
@@ -48,7 +56,7 @@ const DashboardLayout = () => {
   } else if (user?.role === 'admin') {
     menuItems.push({ text: 'Courses', path: '/dashboard/courses' });
     menuItems.push({ text: 'Users', path: '/dashboard/users' });
-    menuItems.push({ text: 'Groups', path: '/dashboard/groups' });
+    menuItems.push({ text: 'Course Bundles', path: '/dashboard/course-bundles' });
   } else {
     menuItems.push({ text: 'My Learning', path: '/dashboard/learning' });
     menuItems.push({ text: 'Courses', path: '/dashboard/courses' });
@@ -96,6 +104,17 @@ const DashboardLayout = () => {
 
             <button className="material-symbols-outlined text-on-surface hover:bg-surface-container-low p-2 rounded-full transition-colors hidden sm:block">notifications</button>
             
+            {user?.role === 'user' && (
+              <RouterLink to="/dashboard/cart" className="relative p-2 text-on-surface hover:bg-surface-container-low rounded-full transition-colors hidden sm:block">
+                <span className="material-symbols-outlined">shopping_cart</span>
+                {cart?.items?.length > 0 && (
+                  <span className="absolute top-1 right-0 inline-flex items-center justify-center px-1.5 py-0.5 text-[10px] font-bold leading-none text-white transform bg-error rounded-full translate-x-1/4 -translate-y-1/4 select-none pointer-events-none">
+                    {cart.items.length}
+                  </span>
+                )}
+              </RouterLink>
+            )}
+
             {/* User Dropdown */}
             <div className="relative" ref={avatarRef}>
               <button 

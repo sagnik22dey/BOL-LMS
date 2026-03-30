@@ -3,7 +3,7 @@ import { useUserStore } from '../../store/userStore';
 import { useAuthStore } from '../../store/authStore';
 import { useOrgStore } from '../../store/orgStore';
 import { useCourseStore } from '../../store/courseStore';
-import { useGroupStore } from '../../store/groupStore';
+import { useCourseBundleStore } from '../../store/courseBundleStore';
 
 const roleConfig = {
   admin: { label: 'Admin', cls: 'badge-info' },
@@ -152,7 +152,7 @@ const Users = () => {
   const { users, fetchUsers, createAdmin, createUser, deleteUser, suspendUser, loading, error } = useUserStore();
   const { orgs, fetchOrgs } = useOrgStore();
   const { courses, fetchCourses } = useCourseStore();
-  const { assignCourseToUser, revokeCourseFromUser, fetchUserIndividualCourses, loading: groupLoading } = useGroupStore();
+  const { assignCourseToUser, revokeCourseFromUser, fetchUserIndividualCourses, loading: bundleLoading } = useCourseBundleStore();
 
   const [open, setOpen] = useState(false);
   const [formData, setFormData] = useState({ name: '', email: '', password: '', organization_id: '' });
@@ -330,7 +330,7 @@ const Users = () => {
       <Modal open={assignModalOpen} onClose={() => setAssignModalOpen(false)} title={`Manage Courses for ${selectedUserForAssign?.name}`}>
         <div className="flex flex-col gap-5">
           <p className="text-sm text-[var(--text-secondary)] -mt-2">
-            Courses assigned here are granted specifically to this user, regardless of their group membership.
+            Courses assigned here are granted specifically to this user, regardless of their course bundle membership.
           </p>
 
           <div>
@@ -348,7 +348,7 @@ const Users = () => {
             </div>
             <button 
                 onClick={handleAssignToUser}
-                disabled={groupLoading || selectedNewCourses.length === 0}
+                disabled={bundleLoading || selectedNewCourses.length === 0}
                 className="mt-2 px-4 py-2 rounded-xl text-sm font-bold bg-[var(--primary)] text-white hover:bg-[var(--primary-dark)] transition-colors disabled:opacity-50"
               >
                 Add Selected Courses
@@ -370,7 +370,7 @@ const Users = () => {
                       <span className="text-sm text-[var(--text-primary)] font-medium">{c ? c.title : 'Unknown Course'}</span>
                       <button 
                         onClick={() => handleRevokeFromUser(assignment.course_id)}
-                        disabled={groupLoading}
+                        disabled={bundleLoading}
                         className="text-xs text-[#ba1a1a] hover:bg-[#fdecea] px-2 py-1.5 rounded font-semibold transition-colors disabled:opacity-50"
                       >
                         Revoke

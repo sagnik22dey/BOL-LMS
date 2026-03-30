@@ -60,16 +60,16 @@ func Setup() *gin.Engine {
 		admin.POST("/users", handlers.CreateOrganizationUser)
 		admin.GET("/users", handlers.GetOrganizationUsers)
 
-		// Group management
-		admin.POST("/groups", handlers.CreateGroup)
-		admin.GET("/groups", handlers.ListGroups)
-		admin.GET("/groups/:id", handlers.GetGroup)
-		admin.PUT("/groups/:id", handlers.UpdateGroup)
-		admin.DELETE("/groups/:id", handlers.DeleteGroup)
-		admin.POST("/groups/:id/users", handlers.AddUsersToGroup)
-		admin.DELETE("/groups/:id/users/:userId", handlers.RemoveUserFromGroup)
-		admin.POST("/groups/:id/courses", handlers.AssignCoursesToGroup)
-		admin.DELETE("/groups/:id/courses/:courseId", handlers.RemoveCourseFromGroup)
+		// Course Bundle management
+		admin.POST("/course-bundles", handlers.CreateCourseBundle)
+		admin.GET("/course-bundles", handlers.ListCourseBundles)
+		admin.GET("/course-bundles/:id", handlers.GetCourseBundle)
+		admin.PUT("/course-bundles/:id", handlers.UpdateCourseBundle)
+		admin.DELETE("/course-bundles/:id", handlers.DeleteCourseBundle)
+		admin.POST("/course-bundles/:id/users", handlers.AddUsersToCourseBundle)
+		admin.DELETE("/course-bundles/:id/users/:userId", handlers.RemoveUserFromCourseBundle)
+		admin.POST("/course-bundles/:id/courses", handlers.AssignCoursesToCourseBundle)
+		admin.DELETE("/course-bundles/:id/courses/:courseId", handlers.RemoveCourseFromCourseBundle)
 
 		// Individual course assignments
 		admin.POST("/users/:id/courses", handlers.AssignCourseToUser)
@@ -119,7 +119,17 @@ func Setup() *gin.Engine {
 	{
 		studentCourses.GET("/presign-get", handlers.GeneratePresignGetURL)
 		studentCourses.POST("/enroll", handlers.EnrollUser)
-		studentCourses.GET("/my-courses", handlers.ListMyEnrollments)
+	studentCourses.GET("/my-courses", handlers.ListMyEnrollments)
+	}
+
+	payments := api.Group("/payments")
+	payments.Use(middleware.AuthRequired())
+	{
+		payments.GET("/cart", handlers.GetCart)
+		payments.POST("/cart", handlers.AddToCart)
+		payments.DELETE("/cart/:itemId", handlers.RemoveFromCart)
+		payments.DELETE("/cart", handlers.ClearCart)
+		payments.POST("/checkout/dummy", handlers.DummyCheckout)
 	}
 
 	quizzes := api.Group("/quizzes")

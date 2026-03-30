@@ -5,7 +5,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { 
   Box, Typography, Paper, Button, TextField, List, ListItem, ListItemText, 
   IconButton, Divider, Dialog, DialogTitle, DialogContent, DialogActions, 
-  CircularProgress, Alert, Snackbar
+  CircularProgress, Alert, Snackbar, FormControlLabel, Switch
 } from '@mui/material';
 import { 
   DragIndicator as DragIcon, 
@@ -69,11 +69,7 @@ const SortableModule = ({ mod, onDelete, onAddMaterial, onDeleteMaterial, onEdit
       </List>
       <Box sx={{ mt: 1, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
         <Button startIcon={<AddIcon />} size="small" variant="outlined" onClick={() => onAddMaterial(mod.id, 'video')}>Video</Button>
-        <Button startIcon={<AddIcon />} size="small" variant="outlined" onClick={() => onAddMaterial(mod.id, 'pdf')}>PDF</Button>
-        <Button startIcon={<AddIcon />} size="small" variant="outlined" onClick={() => onAddMaterial(mod.id, 'docx')}>DOCX</Button>
-        <Button startIcon={<AddIcon />} size="small" variant="outlined" onClick={() => onAddMaterial(mod.id, 'xlsx')}>XLSX</Button>
-        <Button startIcon={<AddIcon />} size="small" variant="outlined" onClick={() => onAddMaterial(mod.id, 'pptx')}>PPTX</Button>
-        <Button startIcon={<AddIcon />} size="small" variant="outlined" onClick={() => onAddMaterial(mod.id, 'image')}>Image</Button>
+        <Button startIcon={<AddIcon />} size="small" variant="outlined" onClick={() => onAddMaterial(mod.id, 'document')}>Upload Document</Button>
         <Button startIcon={<AddIcon />} size="small" variant="outlined" onClick={() => onAddMaterial(mod.id, 'text')}>Text</Button>
         <Button startIcon={<AddIcon />} size="small" variant="outlined" color="secondary" onClick={() => onAddMaterial(mod.id, 'quiz')}>Quiz</Button>
         <Button startIcon={<AddIcon />} size="small" variant="outlined" color="secondary" onClick={() => onAddMaterial(mod.id, 'assignment')}>Assignment</Button>
@@ -90,7 +86,8 @@ const CourseBuilder = () => {
   const [courseData, setCourseData] = useState({
     title: '',
     description: '',
-    modules: []
+    modules: [],
+    is_public: false
   });
 
   const [editDialogOpen, setEditDialogOpen] = useState(false);
@@ -109,7 +106,8 @@ const CourseBuilder = () => {
       setCourseData({
         title: currentCourse.title || '',
         description: currentCourse.description || '',
-        modules: currentCourse.modules || []
+        modules: currentCourse.modules || [],
+        is_public: currentCourse.is_public || false
       });
     }
   }, [currentCourse]);
@@ -218,6 +216,7 @@ const CourseBuilder = () => {
         ...currentCourse,
         title: courseData.title,
         description: courseData.description,
+        is_public: courseData.is_public,
         modules: courseData.modules.map((mod, modIdx) => ({
             ...mod,
             order: modIdx,
@@ -240,11 +239,17 @@ const CourseBuilder = () => {
   };
 
   const [uploadingFile, setUploadingFile] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadTimeLeft, setUploadTimeLeft] = useState('');
 
   const handleFileUpload = async (file, type) => {
     if (!file) return;
 
     setUploadingFile(true);
+    setUploadProgress(0);
+    setUploadTimeLeft('');
+    const startTime = Date.now();
+
     try {
       const bucket = type === 'video' ? 'bol-lms-videos' : 'bol-lms-documents';
       const objectName = `uploads/${Date.now()}_${file.name}`;
@@ -260,14 +265,45 @@ const CourseBuilder = () => {
       await axios.put(data.url, file, {
         headers: {
           'Content-Type': file.type
+        },
+        onUploadProgress: (progressEvent) => {
+          if (progressEvent.total) {
+            const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+            setUploadProgress(percentCompleted);
+            
+            const timeElapsed = (Date.now() - startTime) / 1000;
+            if (timeElapsed > 1 && progressEvent.loaded > 0) {
+              const uploadSpeed = progressEvent.loaded / timeElapsed;
+              const bytesRemaining = progressEvent.total - progressEvent.loaded;
+              const secsRemaining = bytesRemaining / uploadSpeed;
+              if (secsRemaining > 60) {
+                 setUploadTimeLeft(`${Math.floor(secsRemaining / 60)}m ${Math.round(secsRemaining % 60)}s left`);
+              } else {
+                 setUploadTimeLeft(`${Math.round(secsRemaining)}s left`);
+              }
+            } else {
+               setUploadTimeLeft('Calculating...');
+            }
+          }
         }
       });
+
+      let finalType = editingMaterial.type;
+      if (finalType === 'document' || !finalType) {
+        const ext = file.name.split('.').pop().toLowerCase();
+        if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'].includes(ext)) {
+          finalType = 'image';
+        } else if (ext) {
+          finalType = ext;
+        }
+      }
 
       // 3. Update material
       setEditingMaterial({ 
         ...editingMaterial, 
-        title: editingMaterial.title || file.name, 
-        file_key: data.object_name 
+        title: editingMaterial.title === 'New DOCUMENT' || !editingMaterial.title ? file.name : editingMaterial.title, 
+        file_key: data.object_name,
+        type: finalType
       });
       
       setSnackbar({ open: true, message: 'File uploaded successfully!', severity: 'success' });
@@ -336,6 +372,10 @@ const CourseBuilder = () => {
           onChange={(e) => setCourseData({ ...courseData, description: e.target.value })}
           sx={{ mb: 2 }}
         />
+        <FormControlLabel
+          control={<Switch checked={courseData.is_public} onChange={(e) => setCourseData({ ...courseData, is_public: e.target.checked })} color="primary" />}
+          label={courseData.is_public ? "Public Course (Available to all users across organizations)" : "Private Course (Available only within your organization)"}
+        />
       </Paper>
 
       <Typography variant="h5" fontWeight="bold" gutterBottom>Modules</Typography>
@@ -382,9 +422,9 @@ const CourseBuilder = () => {
                     helperText="Enter MinIO key or external video URL"
                     sx={{ mb: 2 }}
                   />
-                  <Button variant="outlined" component="label" size="small" disabled={uploadingFile}>
+                  <Button variant="outlined" component="label" size="small" disabled={uploadingFile} sx={{ minWidth: 200 }}>
                     {uploadingFile ? <CircularProgress size={20} sx={{ mr: 1 }} /> : <AddIcon sx={{ mr: 1 }} />}
-                    Upload Video
+                    {uploadingFile ? `Uploading ${uploadProgress}% (${uploadTimeLeft})` : 'Upload Video'}
                     <input type="file" hidden accept="video/*" onChange={(e) => handleFileUpload(e.target.files[0], 'video')} />
                   </Button>
                 </Box>
@@ -435,9 +475,9 @@ const CourseBuilder = () => {
                       helperText="Specify the storage key for this file"
                    />
                    <Box sx={{ mt: 2 }}>
-                     <Button variant="outlined" component="label" size="small" disabled={uploadingFile}>
+                     <Button variant="outlined" component="label" size="small" disabled={uploadingFile} sx={{ minWidth: 200 }}>
                         {uploadingFile ? <CircularProgress size={20} sx={{ mr: 1 }} /> : <AddIcon sx={{ mr: 1 }} />}
-                        {editingMaterial.file_key ? 'Replace File' : 'Upload File'}
+                        {uploadingFile ? `Uploading ${uploadProgress}% (${uploadTimeLeft})` : (editingMaterial.file_key ? 'Replace File' : 'Upload File')}
                         <input 
                           type="file" 
                           hidden 
@@ -448,6 +488,7 @@ const CourseBuilder = () => {
                             xlsx: '.xls,.xlsx',
                             pptx: '.ppt,.pptx',
                             image: 'image/*',
+                            document: '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,image/*'
                           }[editingMaterial.type] || '*'}
                           onChange={(e) => handleFileUpload(e.target.files[0], editingMaterial.type)} 
                         />

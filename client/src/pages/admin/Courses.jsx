@@ -2,8 +2,10 @@ import { useState, useEffect } from 'react';
 import { Link as RouterLink } from 'react-router-dom';
 import { useCourseStore } from '../../store/courseStore';
 import { useAuthStore } from '../../store/authStore';
+import useCartStore from '../../store/cartStore';
 
 const CourseCard = ({ course, isAdmin, onTogglePublish }) => {
+  const { addToCart, loading } = useCartStore();
   return (
     <div className="group bg-surface-container-lowest flex flex-col rounded-3xl overflow-hidden shadow-sm hover:shadow-xl transition-all duration-300 border border-surface-dim hover:-translate-y-1 h-full">
       {isAdmin ? (
@@ -13,8 +15,13 @@ const CourseCard = ({ course, isAdmin, onTogglePublish }) => {
             {course.title.charAt(0).toUpperCase()}
           </span>
           
-          <div className="absolute top-4 right-4 text-xs font-bold px-2.5 py-1 rounded-full backdrop-blur-md shadow-sm border border-white/20 text-white font-headline" style={{ backgroundColor: course.is_published ? 'rgba(46, 204, 113, 0.4)' : 'rgba(255, 255, 255, 0.2)'}}>
-            {course.is_published ? 'Published' : 'Draft'}
+          <div className="absolute top-4 right-4 flex flex-col gap-2 items-end">
+            <div className="text-xs font-bold px-2.5 py-1 rounded-full backdrop-blur-md shadow-sm border border-white/20 text-white font-headline" style={{ backgroundColor: course.is_published ? 'rgba(46, 204, 113, 0.4)' : 'rgba(255, 255, 255, 0.2)'}}>
+              {course.is_published ? 'Published' : 'Draft'}
+            </div>
+            <div className="text-xs font-bold px-2.5 py-1 rounded-full backdrop-blur-md shadow-sm border border-white/20 text-white font-headline" style={{ backgroundColor: course.is_public ? 'rgba(52, 152, 219, 0.4)' : 'rgba(155, 89, 182, 0.4)'}}>
+              {course.is_public ? 'Public' : 'Org Only'}
+            </div>
           </div>
         </RouterLink>
       ) : (
@@ -23,6 +30,9 @@ const CourseCard = ({ course, isAdmin, onTogglePublish }) => {
           <span className="text-6xl font-black text-white/20 font-headline select-none pointer-events-none group-hover:scale-110 transition-transform">
             {course.title.charAt(0).toUpperCase()}
           </span>
+          <div className="absolute top-4 right-4 text-xs font-bold px-2.5 py-1 rounded-full backdrop-blur-md shadow-sm border border-white/20 text-white font-headline" style={{ backgroundColor: course.is_public ? 'rgba(52, 152, 219, 0.4)' : 'rgba(155, 89, 182, 0.4)'}}>
+            {course.is_public ? 'Public Catalog' : 'Org Assigned'}
+          </div>
         </div>
       )}
 
@@ -35,8 +45,8 @@ const CourseCard = ({ course, isAdmin, onTogglePublish }) => {
         </p>
         
         <div className="flex items-center gap-1.5 text-on-surface-variant mb-4">
-          <span className="material-symbols-outlined text-[16px]">school</span>
-          <span className="text-[11px] font-bold uppercase tracking-wider">{course.modules?.length || 0} Modules</span>
+          <span className="material-symbols-outlined text-[16px]">payments</span>
+          <span className="text-[11px] font-bold uppercase tracking-wider">{course.price > 0 ? `${course.currency} ${course.price}` : 'Free'}</span>
         </div>
 
         <div className="flex items-center gap-2 mt-auto pt-4 border-t border-surface-dim/40">
@@ -57,9 +67,14 @@ const CourseCard = ({ course, isAdmin, onTogglePublish }) => {
               </RouterLink>
             </div>
           ) : (
-            <RouterLink to={`/dashboard/learning/${course.id}`} className="w-full text-center py-2.5 rounded-xl bg-primary text-white text-sm font-bold hover:bg-on-primary-fixed-variant transition-colors font-headline">
-              View Course
-            </RouterLink>
+            <div className="flex gap-2 w-full">
+              <button onClick={() => addToCart('course', course.id)} disabled={loading} className="w-full text-center py-2.5 rounded-xl bg-primary-container text-primary font-bold hover:bg-primary hover:text-white transition-colors text-sm font-headline shadow-sm">
+                Add to Cart
+              </button>
+              <RouterLink to={`/dashboard/learning/${course.id}`} className="w-full text-center py-2.5 rounded-xl bg-primary text-white text-sm font-bold hover:bg-on-primary-fixed-variant transition-colors font-headline shadow-sm">
+                View
+              </RouterLink>
+            </div>
           )}
         </div>
       </div>
@@ -73,14 +88,14 @@ const Courses = () => {
   const { courses, fetchCourses, createCourse, loading, error } = useCourseStore();
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
-  const [formData, setFormData] = useState({ title: '', description: '' });
+  const [formData, setFormData] = useState({ title: '', description: '', price: 0, currency: 'INR', validity_days: '' });
   const [formError, setFormError] = useState('');
 
   useEffect(() => { fetchCourses(); }, [fetchCourses]);
 
   const handleClose = () => {
     setOpen(false);
-    setFormData({ title: '', description: '' });
+    setFormData({ title: '', description: '', price: 0, currency: 'INR', validity_days: '' });
     setFormError('');
   };
 
@@ -91,7 +106,12 @@ const Courses = () => {
       setFormError('Title and description are required.');
       return;
     }
-    const created = await createCourse(formData);
+    const payload = {
+      ...formData,
+      price: parseInt(formData.price, 10) || 0,
+      validity_days: formData.validity_days ? parseInt(formData.validity_days, 10) : null
+    };
+    const created = await createCourse(payload);
     if (created) {
       handleClose();
       window.location.href = `/dashboard/courses/builder/${created.id}`;
@@ -183,7 +203,7 @@ const Courses = () => {
                 <input 
                   required autoFocus type="text" 
                   value={formData.title} onChange={(e) => setFormData({...formData, title: e.target.value})}
-                  className="bg-surface-container-low border border-surface-dim rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary focus:border-primary font-body transition-shadow"
+                  className="w-full bg-surface-container-low border border-surface-dim rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary focus:border-primary font-body transition-shadow"
                   placeholder="e.g. Advanced Leadership"
                 />
               </div>
@@ -193,9 +213,29 @@ const Courses = () => {
                 <textarea 
                   required rows="3"
                   value={formData.description} onChange={(e) => setFormData({...formData, description: e.target.value})}
-                  className="bg-surface-container-low border border-surface-dim rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary focus:border-primary font-body resize-none transition-shadow"
+                  className="w-full bg-surface-container-low border border-surface-dim rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary focus:border-primary font-body resize-none transition-shadow"
                   placeholder="Brief overview of the course content..."
                 />
+              </div>
+
+              <div className="flex gap-4">
+                <div className="flex flex-col gap-1.5 flex-1 min-w-0">
+                  <label className="text-sm font-bold text-on-surface font-headline">Price</label>
+                  <input 
+                    type="number" min="0" step="1"
+                    value={formData.price} onChange={(e) => setFormData({...formData, price: e.target.value})}
+                    className="w-full bg-surface-container-low border border-surface-dim rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary font-body"
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5 flex-1 min-w-0">
+                  <label className="text-sm font-bold text-on-surface font-headline">Validity (Days)</label>
+                  <input 
+                    type="number" min="1" step="1"
+                    value={formData.validity_days} onChange={(e) => setFormData({...formData, validity_days: e.target.value})}
+                    className="w-full bg-surface-container-low border border-surface-dim rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary font-body"
+                    placeholder="Blank for lifetime"
+                  />
+                </div>
               </div>
 
               <div className="flex gap-3 justify-end mt-2">

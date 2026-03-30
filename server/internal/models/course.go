@@ -34,13 +34,20 @@ type Course struct {
 	Modules        []Module        `json:"modules"`
 	RawModules     json.RawMessage `json:"-"`
 	IsPublished    bool            `json:"is_published"`
+	IsPublic       bool            `json:"is_public"`
+	Price          int             `json:"price"`
+	Currency       string          `json:"currency"`
+	ValidityDays   *int            `json:"validity_days,omitempty"`
 	CreatedAt      time.Time       `json:"created_at"`
 	UpdatedAt      time.Time       `json:"updated_at"`
 }
 
 type CreateCourseRequest struct {
-	Title       string `json:"title" binding:"required"`
-	Description string `json:"description"`
+	Title        string `json:"title" binding:"required"`
+	Description  string `json:"description"`
+	Price        int    `json:"price"`
+	Currency     string `json:"currency"`
+	ValidityDays *int   `json:"validity_days,omitempty"`
 }
 
 type PresignRequest struct {
