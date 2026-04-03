@@ -12,11 +12,18 @@ RUN bun run build
 
 # Serve Stage
 FROM nginx:alpine
-# Copy custom Nginx configuration for React Router
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+
+# Install envsubst (part of gettext) for PORT substitution
+RUN apk add --no-cache gettext
+
+# Copy custom Nginx configuration template for React Router
+COPY nginx.conf /etc/nginx/templates/default.conf.template
+
 # Copy built static files
 COPY --from=builder /app/dist /usr/share/nginx/html
 
+# Railway injects $PORT at runtime; envsubst replaces it in the nginx config
+ENV PORT=80
 EXPOSE 80
 
-CMD ["nginx", "-g", "daemon off;"]
+CMD ["/bin/sh", "-c", "envsubst '${PORT}' < /etc/nginx/templates/default.conf.template > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"]

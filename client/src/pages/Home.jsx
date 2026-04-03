@@ -1,12 +1,24 @@
-import { Link as RouterLink } from 'react-router-dom';
+import { Link as RouterLink, Navigate } from 'react-router-dom';
+import { useAuthStore } from '../store/authStore';
 
 const Home = () => {
+  const { isAuthenticated, initializing } = useAuthStore();
+
+  // While the session is being restored, render nothing (App.jsx handles the
+  // full-page spinner, but this guard is an extra safety net).
+  if (initializing) return null;
+
+  // If the user is already logged in, send them straight to their dashboard
+  // instead of showing the public landing page.
+  if (isAuthenticated) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
   return (
     <main className="pt-20">
       {/* Hero Section */}
       <section className="relative h-[600px] overflow-hidden flex items-center px-8 lg:px-24">
         <div className="absolute inset-0 z-0 bg-primary-fixed">
-          {/* Subtle pattern or image instead of hardcoded background */}
           <div className="absolute inset-0 bg-gradient-to-br from-primary to-secondary opacity-90"></div>
         </div>
         <div className="relative z-10 max-w-2xl text-white">
@@ -45,7 +57,7 @@ const Home = () => {
         </div>
       </section>
 
-      {/* Category Section: Tonal depth layout */}
+      {/* Category Section */}
       <section className="bg-background py-24">
         <div className="max-w-7xl mx-auto px-8">
           <div className="text-center mb-16">
@@ -71,14 +83,13 @@ const Home = () => {
         </div>
       </section>
 
-      {/* Achievement/CTA Section */}
+      {/* CTA Section */}
       <section className="py-24 px-4 md:px-8">
         <div className="max-w-7xl mx-auto bg-primary rounded-[3rem] p-12 md:p-24 relative overflow-hidden flex flex-col items-center text-center gap-8 shadow-md">
           <div className="absolute inset-0 opacity-10 pointer-events-none">
             <div className="absolute -top-24 -left-24 w-96 h-96 bg-white rounded-full blur-3xl"></div>
             <div className="absolute -bottom-24 -right-24 w-96 h-96 bg-primary-fixed rounded-full blur-3xl"></div>
           </div>
-          
           <div className="relative z-10 text-white max-w-2xl">
             <h2 className="text-4xl md:text-5xl font-extrabold font-headline mb-6 leading-tight">Ready to Transform Your L&D Program?</h2>
             <p className="text-primary-fixed text-lg mb-8 leading-relaxed">Join hundreds of organizations already delivering exceptional learning experiences today.</p>

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link as RouterLink, useNavigate } from 'react-router-dom';
+import { Link as RouterLink, useNavigate, Navigate } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 
 const Register = () => {
@@ -7,8 +7,13 @@ const Register = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const { registerUser } = useAuthStore();
+  const { registerUser, isAuthenticated } = useAuthStore();
   const navigate = useNavigate();
+
+  // Already logged in — go straight to the dashboard
+  if (isAuthenticated) {
+    return <Navigate to="/dashboard" replace />;
+  }
 
   const handleChange = (e) => setForm({ ...form, [e.target.name]: e.target.value });
 
