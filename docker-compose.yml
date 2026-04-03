@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  api:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    ports:
+      - "${PORT:-8080}:${PORT:-8080}"  # Exposed for direct access if needed
+    env_file:
+      - ./server/.env
+    restart: always
+
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+      args:
+        # Empty string: the outer nginx proxy forwards /api/ to the Go backend,
+        # so the React bundle can use relative URLs.
+        VITE_API_URL: ""
+    environment:
+      - PORT=${CLIENT_PORT:-80}
+      - API_BACKEND_URL=http://api:8080
+    restart: always
+
+  proxy:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - api
+      - client
+    restart: always
