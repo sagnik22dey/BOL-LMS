@@ -1,7 +1,10 @@
 import axios from 'axios';
 
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:8080',
+  // In production behind nginx proxy: VITE_API_URL should be set at build time
+  // (e.g. https://api.yourdomain.com for Railway, or leave empty for docker-compose
+  // where nginx proxies /api/* to the backend container).
+  baseURL: import.meta.env.VITE_API_URL || '',
   headers: {
     'Content-Type': 'application/json',
   },

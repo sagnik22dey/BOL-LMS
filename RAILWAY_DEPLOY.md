@@ -67,6 +67,7 @@ railway init
 | `MINIO_USE_SSL` | `true` (if using HTTPS) |
 | `MINIO_BUCKET_VIDEOS` | `bol-lms-videos` |
 | `MINIO_BUCKET_DOCS` | `bol-lms-documents` |
+| `ALLOWED_ORIGINS` | The Railway public URL of your `client` service (e.g. `https://client-production-xxxx.up.railway.app`). Comma-separate multiple origins. |
 | `DUMMY_SUPERADMIN_EMAIL` | `superadmin@yourdomain.com` |
 | `DUMMY_SUPERADMIN_PASSWORD` | A secure password |
 | `DUMMY_ADMIN_EMAIL` | `admin@yourdomain.com` |
@@ -86,9 +87,10 @@ railway init
 |---|---|
 | `PORT` | Set automatically by Railway |
 | `VITE_API_URL` | The Railway public URL of your `api` service (e.g. `https://api-production-xxxx.up.railway.app`) |
+| `VITE_WS_URL` | Same as `VITE_API_URL` — the Railway public URL of your `api` service |
 
-> **Important**: `VITE_API_URL` is a **build-time** variable. Set it before the first deploy  
-> or trigger a redeploy after setting it.
+> **Important**: `VITE_API_URL` and `VITE_WS_URL` are **build-time** variables baked into the JS
+> bundle by Vite. Set them **before** the first deploy or trigger a redeploy after setting them.
 
 ---
 

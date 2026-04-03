@@ -25,8 +25,22 @@ const CommentSection = ({ moduleId }) => {
   const connectWs = useCallback(() => {
     if (!moduleId) return;
     const token = localStorage.getItem('token');
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}/ws/comments/${moduleId}${token ? `?token=${token}` : ''}`;
+
+    // VITE_WS_URL should be set on Railway to the API service's public URL
+    // e.g.  VITE_WS_URL=https://api-xxx.up.railway.app
+    // When unset (docker-compose / same-origin nginx proxy) fall back to the
+    // current page's host so relative WebSocket paths work correctly.
+    const apiBase = import.meta.env.VITE_WS_URL || '';
+    let wsUrl;
+    if (apiBase) {
+      // Strip trailing slash then convert http(s) → ws(s)
+      const normalised = apiBase.replace(/\/$/, '');
+      const wsBase = normalised.replace(/^http/, 'ws');
+      wsUrl = `${wsBase}/ws/comments/${moduleId}${token ? `?token=${token}` : ''}`;
+    } else {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      wsUrl = `${protocol}//${window.location.host}/ws/comments/${moduleId}${token ? `?token=${token}` : ''}`;
+    }
 
     const socket = new WebSocket(wsUrl);
     ws.current = socket;

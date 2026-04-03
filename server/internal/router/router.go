@@ -2,6 +2,8 @@ package router
 
 import (
 	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"bol-lms-server/internal/handlers"
@@ -13,11 +15,33 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// allowedOrigins builds the CORS origin list at startup.
+// Always includes localhost variants for development.
+// Add any extra origins via the ALLOWED_ORIGINS env var as a comma-separated list,
+// e.g. ALLOWED_ORIGINS=https://app.yourdomain.com,https://www.yourdomain.com
+func allowedOrigins() []string {
+	base := []string{
+		"http://localhost:5173",
+		"http://localhost:3000",
+		"http://localhost:80",
+		"http://localhost",
+	}
+	if extra := os.Getenv("ALLOWED_ORIGINS"); extra != "" {
+		for _, o := range strings.Split(extra, ",") {
+			o = strings.TrimSpace(o)
+			if o != "" {
+				base = append(base, o)
+			}
+		}
+	}
+	return base
+}
+
 func Setup() *gin.Engine {
 	r := gin.Default()
 
 	r.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"http://localhost:5173", "http://localhost:3000", "http://localhost:80"},
+		AllowOrigins:     allowedOrigins(),
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
 		ExposeHeaders:    []string{"Content-Length"},
