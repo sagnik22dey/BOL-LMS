@@ -331,24 +331,26 @@ const CourseBuilder = () => {
 
   return (
     <Box>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 4 }}>
+      <Box sx={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', mb: 4, gap: 2 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
             <IconButton onClick={() => navigate('/dashboard/courses')}><BackIcon /></IconButton>
-            <Typography variant="h4" fontWeight="bold">Course Builder</Typography>
+            <Typography variant="h5" fontWeight="bold">Course Builder</Typography>
         </Box>
-        <Box sx={{ display: 'flex', gap: 2 }}>
-            <Button 
-                variant="outlined" 
-                color="secondary" 
+        <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+            <Button
+                variant="outlined"
+                color="secondary"
+                size="small"
                 onClick={() => navigate(`/dashboard/courses/${courseId}/assessments`)}
                 disabled={loading || !courseId}
             >
                 View Assessments
             </Button>
-            <Button 
-                variant="contained" 
-                color="primary" 
-                startIcon={<SaveIcon />} 
+            <Button
+                variant="contained"
+                color="primary"
+                size="small"
+                startIcon={<SaveIcon />}
                 onClick={handleSaveCourse}
                 disabled={loading}
             >

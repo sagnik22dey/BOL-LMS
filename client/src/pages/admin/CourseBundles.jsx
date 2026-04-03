@@ -254,11 +254,11 @@ const CourseBundles = () => {
                   <p className="text-xs text-[var(--text-secondary)]">{bundle.description || 'No description'}</p>
                 </div>
               </div>
-              <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                <button onClick={(e) => handleEditBundleClick(e, bundle)} className="text-[var(--text-secondary)] hover:text-[var(--primary)] p-1">
+              <div className="flex gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
+                <button onClick={(e) => handleEditBundleClick(e, bundle)} className="text-[var(--text-secondary)] hover:text-[var(--primary)] p-1" aria-label="Edit bundle">
                   <span className="material-symbols-outlined text-sm">edit</span>
                 </button>
-                <button onClick={(e) => handleDeleteBundleClick(e, bundle.id)} className="text-[var(--text-secondary)] hover:text-[#ba1a1a] p-1">
+                <button onClick={(e) => handleDeleteBundleClick(e, bundle.id)} className="text-[var(--text-secondary)] hover:text-[#ba1a1a] p-1" aria-label="Delete bundle">
                   <span className="material-symbols-outlined text-sm">delete</span>
                 </button>
               </div>

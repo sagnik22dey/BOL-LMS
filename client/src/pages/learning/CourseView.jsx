@@ -30,7 +30,8 @@ const CourseView = () => {
   const [error, setError] = useState('');
   const [fileUrl, setFileUrl] = useState('');
   const [tab, setTab] = useState(0);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  // Default sidebar closed on mobile (< 1024px), open on desktop
+  const [sidebarOpen, setSidebarOpen] = useState(() => window.innerWidth >= 1024);
   const [expandedModules, setExpandedModules] = useState({});
   const [hoveringContent, setHoveringContent] = useState(false);
 
@@ -251,7 +252,7 @@ const CourseView = () => {
           className="flex items-center gap-1.5 text-white/70 hover:text-white transition-colors text-sm font-medium"
         >
           <span className="material-symbols-outlined text-[18px]">arrow_back</span>
-          <span className="hidden sm:inline">Back</span>
+          <span>Back</span>
         </button>
         <div className="h-5 w-px bg-white/20" />
         <p className="text-sm font-semibold truncate flex-1">{course.title}</p>
@@ -259,7 +260,7 @@ const CourseView = () => {
         <div className="flex items-center gap-2">
           {isAdmin && (
             <>
-              <span className="hidden md:flex items-center gap-1 bg-primary/20 text-primary-fixed-dim px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider">
+              <span className="hidden sm:flex items-center gap-1 bg-primary/20 text-primary-fixed-dim px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider">
                 Admin Preview
               </span>
               <button
@@ -267,7 +268,7 @@ const CourseView = () => {
                 className="flex items-center gap-1 px-2 py-1 bg-white/10 text-white text-xs font-semibold rounded hover:bg-white/20 transition-colors"
               >
                 <span className="material-symbols-outlined text-[14px]">assignment_turned_in</span>
-                <span className="hidden sm:inline">Submissions</span>
+                <span>Submissions</span>
               </button>
             </>
           )}

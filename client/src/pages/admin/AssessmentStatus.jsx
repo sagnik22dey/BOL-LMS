@@ -90,16 +90,16 @@ const AssessmentStatus = () => {
 
   return (
     <div>
-      <div className="flex items-center gap-3 mb-6">
+      <div className="flex flex-wrap items-center gap-3 mb-6">
         <button
           onClick={() => navigate(`/dashboard/courses/builder/${courseId}`)}
-          className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold text-[var(--text-secondary)] hover:bg-[var(--surface-high)] transition-colors"
+          className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-semibold text-[var(--text-secondary)] hover:bg-[var(--surface-high)] transition-colors flex-shrink-0"
         >
           <span className="material-symbols-outlined text-base">arrow_back</span>
           Back to Course Edit
         </button>
-        <div className="w-px h-5 bg-[var(--outline)]" />
-        <h2 className="text-xl font-extrabold font-headline text-[var(--text-primary)]" style={{ letterSpacing: '-0.5px' }}>
+        <div className="hidden sm:block w-px h-5 bg-[var(--outline)]" />
+        <h2 className="text-base sm:text-xl font-extrabold font-headline text-[var(--text-primary)] min-w-0 truncate" style={{ letterSpacing: '-0.5px' }}>
           Assessment Status — {course?.title}
         </h2>
       </div>
@@ -131,42 +131,69 @@ const AssessmentStatus = () => {
             {(assessments.quizzes || []).length === 0 ? (
               <p className="text-sm text-[var(--text-secondary)] mb-6">No quiz submissions yet.</p>
             ) : (
-              <div className="data-table-container mb-6">
-                <table className="w-full">
-                  <thead>
-                    <tr className="bg-[var(--surface-low)] border-b border-[var(--outline)]">
-                      <th className={thClass}>User ID</th>
-                      <th className={thClass}>Score</th>
-                      <th className={thClass}>Submitted At</th>
-                      <th className={thClass}>Status</th>
-                      <th className={thClass}>Action</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[var(--outline)]">
-                    {(assessments.quizzes || []).map((sub) => (
-                      <tr key={sub.id} className="hover:bg-[var(--surface)] transition-colors">
-                        <td className={tdClass + ' font-mono text-xs'}>{sub.user_id}</td>
-                        <td className={tdClass}>{sub.score} / {sub.max_score}</td>
-                        <td className={tdClass + ' text-[var(--text-secondary)] text-xs'}>{new Date(sub.submitted_at).toLocaleString()}</td>
-                        <td className={tdClass}>
-                          <span className={`badge ${sub.retake_allowed ? 'badge-warning' : 'badge-success'}`}>
-                            {sub.retake_allowed ? 'Retake Unlocked' : 'Submitted'}
-                          </span>
-                        </td>
-                        <td className={tdClass}>
-                          <button
-                            disabled={sub.retake_allowed}
-                            onClick={() => handleUnlockQuiz(sub.quiz_id, sub.user_id)}
-                            className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-[var(--outline)] text-[var(--text-primary)] hover:bg-[var(--surface-high)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                            Unlock Retake
-                          </button>
-                        </td>
+              <>
+                {/* Mobile card view */}
+                <div className="flex flex-col gap-3 mb-6 sm:hidden">
+                  {(assessments.quizzes || []).map((sub) => (
+                    <div key={sub.id} className="bg-[var(--surface-low)] rounded-xl p-4 border border-[var(--outline)] space-y-2">
+                      <div className="flex justify-between items-start gap-2">
+                        <span className="text-xs font-mono text-[var(--text-secondary)] break-all">{sub.user_id}</span>
+                        <span className={`badge flex-shrink-0 ${sub.retake_allowed ? 'badge-warning' : 'badge-success'}`}>
+                          {sub.retake_allowed ? 'Retake Unlocked' : 'Submitted'}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center text-sm">
+                        <span className="font-semibold text-[var(--text-primary)]">Score: {sub.score} / {sub.max_score}</span>
+                        <span className="text-xs text-[var(--text-secondary)]">{new Date(sub.submitted_at).toLocaleDateString()}</span>
+                      </div>
+                      <button
+                        disabled={sub.retake_allowed}
+                        onClick={() => handleUnlockQuiz(sub.quiz_id, sub.user_id)}
+                        className="w-full text-xs font-semibold px-3 py-2 rounded-lg border border-[var(--outline)] text-[var(--text-primary)] hover:bg-[var(--surface-high)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Unlock Retake
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                {/* Desktop table */}
+                <div className="data-table-container mb-6 hidden sm:block">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="bg-[var(--surface-low)] border-b border-[var(--outline)]">
+                        <th className={thClass}>User ID</th>
+                        <th className={thClass}>Score</th>
+                        <th className={thClass}>Submitted At</th>
+                        <th className={thClass}>Status</th>
+                        <th className={thClass}>Action</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody className="divide-y divide-[var(--outline)]">
+                      {(assessments.quizzes || []).map((sub) => (
+                        <tr key={sub.id} className="hover:bg-[var(--surface)] transition-colors">
+                          <td className={tdClass + ' font-mono text-xs max-w-[120px] truncate'}>{sub.user_id}</td>
+                          <td className={tdClass}>{sub.score} / {sub.max_score}</td>
+                          <td className={tdClass + ' text-[var(--text-secondary)] text-xs'}>{new Date(sub.submitted_at).toLocaleString()}</td>
+                          <td className={tdClass}>
+                            <span className={`badge ${sub.retake_allowed ? 'badge-warning' : 'badge-success'}`}>
+                              {sub.retake_allowed ? 'Retake Unlocked' : 'Submitted'}
+                            </span>
+                          </td>
+                          <td className={tdClass}>
+                            <button
+                              disabled={sub.retake_allowed}
+                              onClick={() => handleUnlockQuiz(sub.quiz_id, sub.user_id)}
+                              className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-[var(--outline)] text-[var(--text-primary)] hover:bg-[var(--surface-high)] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              Unlock Retake
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
             )}
 
             {/* Assignment Submissions */}
@@ -174,50 +201,83 @@ const AssessmentStatus = () => {
             {(assessments.assignments || []).length === 0 ? (
               <p className="text-sm text-[var(--text-secondary)]">No assignment submissions yet.</p>
             ) : (
-              <div className="data-table-container">
-                <table className="w-full">
-                  <thead>
-                    <tr className="bg-[var(--surface-low)] border-b border-[var(--outline)]">
-                      <th className={thClass}>User ID</th>
-                      <th className={thClass}>File</th>
-                      <th className={thClass}>Submitted At</th>
-                      <th className={thClass}>Status</th>
-                      <th className={thClass}>Action</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[var(--outline)]">
-                    {(assessments.assignments || []).map((sub) => (
-                      <tr key={sub.id} className="hover:bg-[var(--surface)] transition-colors">
-                        <td className={tdClass + ' font-mono text-xs'}>{sub.user_id}</td>
-                        <td className={tdClass}>
-                          <button
-                            onClick={() => handleViewFile(sub.file_path)}
-                            className="text-[var(--primary)] font-medium text-xs hover:underline flex items-center gap-1 bg-transparent border-none cursor-pointer p-0"
-                          >
-                            <span className="material-symbols-outlined text-sm">open_in_new</span>
-                            View File
-                          </button>
-                        </td>
-                        <td className={tdClass + ' text-[var(--text-secondary)] text-xs'}>{new Date(sub.submitted_at).toLocaleString()}</td>
-                        <td className={tdClass}>
-                          <span className={`badge ${sub.retake_allowed ? 'badge-warning' : 'badge-success'}`}>
-                            {sub.retake_allowed ? 'Retake Allowed' : 'Submitted'}
-                          </span>
-                        </td>
-                        <td className={tdClass}>
-                          <button
-                            disabled={sub.retake_allowed}
-                            onClick={() => handleResetAssignment(sub.assignment_id, sub.user_id)}
-                            className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-[#f5c6c6] text-[#ba1a1a] hover:bg-[#fdecea] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                            Reset Submission
-                          </button>
-                        </td>
+              <>
+                {/* Mobile card view */}
+                <div className="flex flex-col gap-3 sm:hidden">
+                  {(assessments.assignments || []).map((sub) => (
+                    <div key={sub.id} className="bg-[var(--surface-low)] rounded-xl p-4 border border-[var(--outline)] space-y-2">
+                      <div className="flex justify-between items-start gap-2">
+                        <span className="text-xs font-mono text-[var(--text-secondary)] break-all">{sub.user_id}</span>
+                        <span className={`badge flex-shrink-0 ${sub.retake_allowed ? 'badge-warning' : 'badge-success'}`}>
+                          {sub.retake_allowed ? 'Retake Allowed' : 'Submitted'}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <button
+                          onClick={() => handleViewFile(sub.file_path)}
+                          className="text-[var(--primary)] font-medium text-xs hover:underline flex items-center gap-1 bg-transparent border-none cursor-pointer p-0"
+                        >
+                          <span className="material-symbols-outlined text-sm">open_in_new</span>
+                          View File
+                        </button>
+                        <span className="text-xs text-[var(--text-secondary)]">{new Date(sub.submitted_at).toLocaleDateString()}</span>
+                      </div>
+                      <button
+                        disabled={sub.retake_allowed}
+                        onClick={() => handleResetAssignment(sub.assignment_id, sub.user_id)}
+                        className="w-full text-xs font-semibold px-3 py-2 rounded-lg border border-[#f5c6c6] text-[#ba1a1a] hover:bg-[#fdecea] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Reset Submission
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                {/* Desktop table */}
+                <div className="data-table-container hidden sm:block">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="bg-[var(--surface-low)] border-b border-[var(--outline)]">
+                        <th className={thClass}>User ID</th>
+                        <th className={thClass}>File</th>
+                        <th className={thClass}>Submitted At</th>
+                        <th className={thClass}>Status</th>
+                        <th className={thClass}>Action</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody className="divide-y divide-[var(--outline)]">
+                      {(assessments.assignments || []).map((sub) => (
+                        <tr key={sub.id} className="hover:bg-[var(--surface)] transition-colors">
+                          <td className={tdClass + ' font-mono text-xs max-w-[120px] truncate'}>{sub.user_id}</td>
+                          <td className={tdClass}>
+                            <button
+                              onClick={() => handleViewFile(sub.file_path)}
+                              className="text-[var(--primary)] font-medium text-xs hover:underline flex items-center gap-1 bg-transparent border-none cursor-pointer p-0"
+                            >
+                              <span className="material-symbols-outlined text-sm">open_in_new</span>
+                              View File
+                            </button>
+                          </td>
+                          <td className={tdClass + ' text-[var(--text-secondary)] text-xs'}>{new Date(sub.submitted_at).toLocaleString()}</td>
+                          <td className={tdClass}>
+                            <span className={`badge ${sub.retake_allowed ? 'badge-warning' : 'badge-success'}`}>
+                              {sub.retake_allowed ? 'Retake Allowed' : 'Submitted'}
+                            </span>
+                          </td>
+                          <td className={tdClass}>
+                            <button
+                              disabled={sub.retake_allowed}
+                              onClick={() => handleResetAssignment(sub.assignment_id, sub.user_id)}
+                              className="text-xs font-semibold px-3 py-1.5 rounded-lg border border-[#f5c6c6] text-[#ba1a1a] hover:bg-[#fdecea] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              Reset Submission
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
             )}
           </>
         )}

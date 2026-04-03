@@ -19,6 +19,12 @@ const DashboardLayout = () => {
 
   const isCourseView = /^\/dashboard\/learning\/[^/]+$/.test(location.pathname);
 
+  // Close mobile menu on route change
+  useEffect(() => {
+    setMobileMenuOpen(false);
+    setAvatarMenuOpen(false);
+  }, [location.pathname]);
+
   useEffect(() => {
     if (user && user.role !== 'super_admin') {
       fetchMyOrg().then(setMyOrg);
@@ -40,6 +46,16 @@ const DashboardLayout = () => {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  // Prevent body scroll when mobile menu is open
+  useEffect(() => {
+    if (mobileMenuOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => { document.body.style.overflow = ''; };
+  }, [mobileMenuOpen]);
 
   const handleLogout = () => {
     logout();
@@ -96,15 +112,17 @@ const DashboardLayout = () => {
             )}
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
             {myOrg && (
               <span className="hidden md:inline-block px-3 py-1 bg-surface-container-low border border-surface-dim rounded-full text-xs font-bold text-on-surface-variant tracking-wider uppercase mr-2">
                 {myOrg.name}
               </span>
             )}
 
+            {/* Notifications - always accessible via mobile menu */}
             <button className="material-symbols-outlined text-on-surface hover:bg-surface-container-low p-2 rounded-full transition-colors hidden sm:block">notifications</button>
             
+            {/* Cart - accessible via mobile menu on small screens */}
             {user?.role === 'user' && (
               <RouterLink to="/dashboard/cart" className="relative p-2 text-on-surface hover:bg-surface-container-low rounded-full transition-colors hidden sm:block">
                 <span className="material-symbols-outlined">shopping_cart</span>
@@ -136,23 +154,10 @@ const DashboardLayout = () => {
                   <div className="p-4 border-b border-surface-dim/50 bg-surface-bright/50">
                     <p className="font-bold font-headline text-sm">{displayName}</p>
                     <p className="text-xs text-on-surface-variant">{user?.email}</p>
+                    {myOrg && <p className="text-xs text-primary font-bold mt-1 uppercase tracking-wider">{myOrg.name}</p>}
                   </div>
                   <div className="p-2 space-y-1">
-                    <div className="block lg:hidden">
-                      <p className="px-3 py-1 text-[10px] font-black tracking-widest uppercase text-outline mt-1 mb-1">Navigation</p>
-                      {menuItems.map((item) => (
-                        <RouterLink 
-                          key={item.text} 
-                          to={item.path}
-                          onClick={() => setAvatarMenuOpen(false)}
-                          className={`block px-3 py-2 rounded-lg text-sm font-bold font-headline transition-colors ${isActive(item.path) ? 'bg-primary-fixed-dim/30 text-primary' : 'text-on-surface hover:bg-surface-container-low'}`}
-                        >
-                          {item.text}
-                        </RouterLink>
-                      ))}
-                      <div className="h-px bg-surface-dim/40 my-2 mx-2"></div>
-                    </div>
-                    
+                    {/* Always show logout in avatar dropdown */}
                     <button 
                       onClick={handleLogout}
                       className="w-full flex items-center gap-3 px-3 py-2 text-sm font-bold text-error hover:bg-error-container/50 rounded-lg transition-colors"
@@ -165,15 +170,116 @@ const DashboardLayout = () => {
               )}
             </div>
 
+            {/* Hamburger — opens full mobile drawer */}
             <button 
-               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+               onClick={() => setMobileMenuOpen(true)}
                className="lg:hidden material-symbols-outlined p-2 hover:bg-surface-container-low rounded-full transition-colors"
+               aria-label="Open navigation menu"
             >
               menu
             </button>
           </div>
         </div>
       </nav>
+
+      {/* ── Mobile Navigation Drawer ── */}
+      {/* Backdrop */}
+      {mobileMenuOpen && (
+        <div
+          className="fixed inset-0 z-[60] bg-black/50 backdrop-blur-sm lg:hidden"
+          onClick={() => setMobileMenuOpen(false)}
+        />
+      )}
+      {/* Drawer panel */}
+      <div
+        className={`fixed top-0 right-0 z-[70] h-full w-72 max-w-[85vw] bg-surface-container-lowest shadow-2xl flex flex-col transition-transform duration-300 ease-in-out lg:hidden ${mobileMenuOpen ? 'translate-x-0' : 'translate-x-full'}`}
+      >
+        {/* Drawer header */}
+        <div className="flex items-center justify-between px-5 py-4 border-b border-surface-dim bg-surface-bright/60">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-primary flex items-center justify-center text-white font-bold font-headline select-none text-lg">
+              {userInitial}
+            </div>
+            <div>
+              <p className="font-bold font-headline text-sm leading-tight">{displayName}</p>
+              <p className="text-[10px] text-on-surface-variant uppercase font-bold tracking-wider">{user?.role?.replace('_', ' ')}</p>
+              {myOrg && <p className="text-[10px] text-primary font-bold tracking-wider">{myOrg.name}</p>}
+            </div>
+          </div>
+          <button
+            onClick={() => setMobileMenuOpen(false)}
+            className="material-symbols-outlined p-2 rounded-full hover:bg-surface-container-low transition-colors text-on-surface-variant"
+            aria-label="Close menu"
+          >
+            close
+          </button>
+        </div>
+
+        {/* Navigation links */}
+        <div className="flex-1 overflow-y-auto p-4">
+          <p className="px-3 py-1 text-[10px] font-black tracking-widest uppercase text-outline mb-2">Navigation</p>
+          <nav className="space-y-1">
+            {menuItems.map((item) => (
+              <RouterLink
+                key={item.text}
+                to={item.path}
+                onClick={() => setMobileMenuOpen(false)}
+                className={`flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-bold font-headline transition-colors ${
+                  isActive(item.path)
+                    ? 'bg-primary-fixed-dim/30 text-primary'
+                    : 'text-on-surface hover:bg-surface-container-low'
+                }`}
+              >
+                {item.text}
+                {isActive(item.path) && <span className="material-symbols-outlined text-primary text-base ml-auto">chevron_right</span>}
+              </RouterLink>
+            ))}
+          </nav>
+
+          <div className="h-px bg-surface-dim/40 my-4 mx-2" />
+
+          {/* Notifications & Cart in mobile menu */}
+          <p className="px-3 py-1 text-[10px] font-black tracking-widest uppercase text-outline mb-2">Quick Actions</p>
+          <div className="space-y-1">
+            <button className="flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-bold text-on-surface hover:bg-surface-container-low transition-colors w-full text-left">
+              <span className="material-symbols-outlined text-on-surface-variant text-xl">notifications</span>
+              Notifications
+            </button>
+
+            {user?.role === 'user' && (
+              <RouterLink
+                to="/dashboard/cart"
+                onClick={() => setMobileMenuOpen(false)}
+                className="flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-bold text-on-surface hover:bg-surface-container-low transition-colors"
+              >
+                <span className="relative">
+                  <span className="material-symbols-outlined text-on-surface-variant text-xl">shopping_cart</span>
+                  {cart?.items?.length > 0 && (
+                    <span className="absolute -top-1 -right-1 inline-flex items-center justify-center w-4 h-4 text-[9px] font-bold text-white bg-error rounded-full">
+                      {cart.items.length}
+                    </span>
+                  )}
+                </span>
+                Cart
+                {cart?.items?.length > 0 && (
+                  <span className="ml-auto text-xs bg-error text-white rounded-full px-2 py-0.5 font-bold">{cart.items.length} item{cart.items.length !== 1 ? 's' : ''}</span>
+                )}
+              </RouterLink>
+            )}
+          </div>
+        </div>
+
+        {/* Sign out at bottom */}
+        <div className="p-4 border-t border-surface-dim">
+          <button 
+            onClick={handleLogout}
+            className="w-full flex items-center gap-3 px-3 py-3 text-sm font-bold text-error hover:bg-error-container/50 rounded-xl transition-colors"
+          >
+            <span className="material-symbols-outlined text-lg">logout</span>
+            Sign Out
+          </button>
+        </div>
+      </div>
 
       {isCourseView ? (
         <main className="pt-16" style={{ height: '100vh' }}>

@@ -17,7 +17,7 @@ const Home = () => {
   return (
     <main className="pt-20">
       {/* Hero Section */}
-      <section className="relative h-[600px] overflow-hidden flex items-center px-8 lg:px-24">
+      <section className="relative min-h-[600px] overflow-hidden flex items-center px-8 lg:px-24 py-16">
         <div className="absolute inset-0 z-0 bg-primary-fixed">
           <div className="absolute inset-0 bg-gradient-to-br from-primary to-secondary opacity-90"></div>
         </div>

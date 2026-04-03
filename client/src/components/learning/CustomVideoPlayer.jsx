@@ -152,6 +152,11 @@ const CustomVideoPlayer = ({ url, onNext, onPrev, hasNext, hasPrev, onEnded, isY
     controlsTimeout.current = setTimeout(() => setShowControls(false), 3000);
   };
 
+  // ── Touch handler – show controls on tap ──────────────────────────────────
+  const handleTouchStart = () => {
+    resetControlsTimeout();
+  };
+
   const toggleFullscreen = (e) => {
     e?.stopPropagation();
     if (!isFullscreen) containerRef.current?.requestFullscreen?.();
@@ -251,6 +256,7 @@ const CustomVideoPlayer = ({ url, onNext, onPrev, hasNext, hasPrev, onEnded, isY
         ref={containerRef}
         onMouseMove={resetControlsTimeout}
         onMouseLeave={() => setShowControls(false)}
+        onTouchStart={handleTouchStart}
         sx={{
           position: 'relative',
           width: '100%',
@@ -395,6 +401,7 @@ const CustomVideoPlayer = ({ url, onNext, onPrev, hasNext, hasPrev, onEnded, isY
       ref={containerRef}
       onMouseMove={resetControlsTimeout}
       onMouseLeave={() => playing && setShowControls(false)}
+      onTouchStart={handleTouchStart}
       sx={{
         position: 'relative',
         width: '100%',

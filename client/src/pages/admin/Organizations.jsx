@@ -121,7 +121,38 @@ const Organizations = () => {
         </div>
       </div>
 
-      <div className="data-table-container">
+      {/* Mobile card layout */}
+      <div className="flex flex-col gap-3 sm:hidden">
+        {orgs.length === 0 && !loading ? (
+          <p className="px-4 py-6 text-center text-sm text-[var(--text-secondary)]">No organizations found</p>
+        ) : (
+          orgs.map((org) => (
+            <div key={org.id} className="bg-[var(--surface-lowest)] rounded-xl border border-[var(--outline)] p-4 space-y-3 shadow-[var(--shadow-sm)]">
+              <div>
+                <p className="text-sm font-semibold text-[var(--text-primary)]">{org.name}</p>
+                <div className="flex items-center gap-2 mt-1">
+                  <span className="px-2 py-0.5 rounded-lg bg-[var(--surface-high)] text-xs font-mono">{org.slug}</span>
+                  <span className="text-xs text-[var(--text-secondary)]">{new Date(org.created_at).toLocaleDateString()}</span>
+                </div>
+              </div>
+              <div className="flex gap-2 pt-1 border-t border-[var(--outline)]">
+                <button
+                  onClick={() => handleEditClick(org)}
+                  className="flex-1 text-xs font-semibold px-3 py-2 rounded-lg border border-[var(--outline)] text-[var(--text-primary)] hover:bg-[var(--surface-high)] transition-colors"
+                >
+                  Edit
+                </button>
+                <button className="flex-1 text-xs font-semibold px-3 py-2 rounded-lg border border-[#f5c6c6] text-[#ba1a1a] hover:bg-[#fdecea] transition-colors">
+                  Suspend
+                </button>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      {/* Desktop table */}
+      <div className="data-table-container hidden sm:block">
         <table className="w-full">
           <thead>
             <tr className="bg-[var(--surface-low)] border-b border-[var(--outline)]">

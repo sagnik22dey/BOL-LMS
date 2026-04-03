@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import axios from 'axios';
+import api from '../api/axios';
 import { useAuthStore } from '../store/authStore';
 
 const TYPE_CONFIG = {
@@ -23,7 +23,7 @@ const NotificationsFeed = () => {
   const fetchNotifications = async () => {
     try {
       setLoading(true);
-      const res = await axios.get('http://localhost:8080/api/notifications', { headers: { Authorization: `Bearer ${token}` } });
+      const res = await api.get('/api/notifications');
       setNotifications(res.data);
       setError(null);
     } catch {
@@ -38,7 +38,7 @@ const NotificationsFeed = () => {
   const handleCreate = async () => {
     try {
       setCreating(true);
-      await axios.post('http://localhost:8080/api/admin/manage/notifications', newNotif, { headers: { Authorization: `Bearer ${token}` } });
+      await api.post('/api/admin/manage/notifications', newNotif);
       setOpen(false);
       setNewNotif({ title: '', message: '', type: 'info' });
       fetchNotifications();

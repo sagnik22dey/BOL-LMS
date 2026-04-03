@@ -67,26 +67,86 @@ const UserRow = ({ u, onSuspend, onDelete, onAssignCourses, loading }) => {
 };
 
 const UsersTable = ({ userList, onSuspend, onDelete, onAssignCourses, loading }) => (
-  <div className="data-table-container">
-    <table className="w-full">
-      <thead>
-        <tr className="bg-[var(--surface-low)] border-b border-[var(--outline)]">
-          {['Name', 'Email', 'Role', 'Status', 'Created', 'Actions'].map((h) => (
-            <th key={h} className={`px-4 py-3 text-xs font-bold uppercase tracking-wider text-[var(--text-secondary)] ${h === 'Actions' ? 'text-right' : 'text-left'}`}>{h}</th>
-          ))}
-        </tr>
-      </thead>
-      <tbody className="divide-y divide-[var(--outline)]">
-        {userList.length === 0 ? (
-          <tr>
-            <td colSpan={6} className="px-4 py-8 text-center text-sm text-[var(--text-secondary)]">No users found</td>
+  <>
+    {/* Mobile card layout */}
+    <div className="flex flex-col gap-3 sm:hidden">
+      {userList.length === 0 ? (
+        <p className="px-4 py-6 text-center text-sm text-[var(--text-secondary)]">No users found</p>
+      ) : (
+        userList.map((u) => {
+          const conf = roleConfig[u.role] || roleConfig.user;
+          return (
+            <div key={u.id} className="bg-[var(--surface-lowest)] rounded-xl border border-[var(--outline)] p-4 space-y-3 shadow-[var(--shadow-sm)]">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-9 h-9 rounded-full bg-[var(--primary)] flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
+                    {u.name?.charAt(0)?.toUpperCase() || u.email?.charAt(0)?.toUpperCase() || 'U'}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-[var(--text-primary)] truncate">{u.name || '—'}</p>
+                    <p className="text-xs text-[var(--text-secondary)] truncate">{u.email}</p>
+                  </div>
+                </div>
+                <div className="flex gap-1.5 flex-shrink-0">
+                  <span className={`badge ${conf.cls}`}>{conf.label}</span>
+                  <span className={`badge ${u.is_suspended ? 'badge-error' : 'badge-success'}`}>
+                    {u.is_suspended ? 'Suspended' : 'Active'}
+                  </span>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2 pt-1 border-t border-[var(--outline)]">
+                {u.role === 'user' && onAssignCourses && (
+                  <button
+                    onClick={() => onAssignCourses(u)}
+                    disabled={loading}
+                    className="text-xs font-semibold px-3 py-1.5 rounded-lg text-white bg-[var(--primary)] hover:bg-[var(--primary-dark)] transition-colors disabled:opacity-50"
+                  >
+                    Courses
+                  </button>
+                )}
+                <button
+                  onClick={() => onSuspend(u.id)}
+                  disabled={loading}
+                  className={`text-xs font-semibold px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50 ${u.is_suspended ? 'text-[#1e7e34] hover:bg-[#e6f4ea]' : 'text-[#e65100] hover:bg-[#fff3e0]'}`}
+                >
+                  {u.is_suspended ? 'Activate' : 'Suspend'}
+                </button>
+                <button
+                  onClick={() => { if (window.confirm('Delete this user?')) onDelete(u.id); }}
+                  disabled={loading}
+                  className="text-xs font-semibold px-3 py-1.5 rounded-lg text-[#ba1a1a] hover:bg-[#fdecea] transition-colors disabled:opacity-50"
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          );
+        })
+      )}
+    </div>
+
+    {/* Desktop table */}
+    <div className="data-table-container hidden sm:block">
+      <table className="w-full">
+        <thead>
+          <tr className="bg-[var(--surface-low)] border-b border-[var(--outline)]">
+            {['Name', 'Email', 'Role', 'Status', 'Created', 'Actions'].map((h) => (
+              <th key={h} className={`px-4 py-3 text-xs font-bold uppercase tracking-wider text-[var(--text-secondary)] ${h === 'Actions' ? 'text-right' : 'text-left'}`}>{h}</th>
+            ))}
           </tr>
-        ) : (
-          userList.map((u) => <UserRow key={u.id} u={u} onSuspend={onSuspend} onDelete={onDelete} onAssignCourses={onAssignCourses} loading={loading} />)
-        )}
-      </tbody>
-    </table>
-  </div>
+        </thead>
+        <tbody className="divide-y divide-[var(--outline)]">
+          {userList.length === 0 ? (
+            <tr>
+              <td colSpan={6} className="px-4 py-8 text-center text-sm text-[var(--text-secondary)]">No users found</td>
+            </tr>
+          ) : (
+            userList.map((u) => <UserRow key={u.id} u={u} onSuspend={onSuspend} onDelete={onDelete} onAssignCourses={onAssignCourses} loading={loading} />)
+          )}
+        </tbody>
+      </table>
+    </div>
+  </>
 );
 
 const OrgAccordion = ({ org, children }) => {

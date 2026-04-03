@@ -131,10 +131,10 @@ const QuizView = ({ quizId }) => {
 
   return (
     <div className="p-2 md:p-4">
-      <div className="flex justify-between items-center mb-6 p-4 bg-[var(--surface-low)] rounded-2xl border border-[var(--outline)]">
+      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2 mb-6 p-4 bg-[var(--surface-low)] rounded-2xl border border-[var(--outline)]">
         <h3 className="text-lg font-extrabold text-[var(--primary)] font-headline">{quiz.title}</h3>
         {!isSubmitted && (
-          <span className={`font-bold text-base ${(timeLeft || 0) < 60 ? 'text-[#ba1a1a]' : 'text-[var(--text-primary)]'}`}>
+          <span className={`font-bold text-base flex-shrink-0 ${(timeLeft || 0) < 60 ? 'text-[#ba1a1a]' : 'text-[var(--text-primary)]'}`}>
             Time Remaining: {formatTime(timeLeft || 0)}
           </span>
         )}
