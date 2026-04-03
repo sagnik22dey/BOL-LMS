@@ -26,3 +26,7 @@ dist/
 build/
 .next/
 out/
+
+# Local Docker (not used by Railway)
+docker-compose.yml
+nginx/

@@ -6,6 +6,12 @@ WORKDIR /app
 COPY package.json bun.lock* ./
 RUN bun install
 
+# Accept VITE_API_URL at build time so Vite can bake it into the bundle.
+# For docker-compose this defaults to empty (nginx proxy handles /api/).
+# For Railway, set this variable in the service dashboard and redeploy.
+ARG VITE_API_URL=""
+ENV VITE_API_URL=${VITE_API_URL}
+
 # Copy source and build
 COPY . .
 RUN bun run build
