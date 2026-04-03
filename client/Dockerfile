@@ -13,17 +13,24 @@ RUN bun run build
 # Serve Stage
 FROM nginx:alpine
 
-# Install envsubst (part of gettext) for PORT substitution
-RUN apk add --no-cache gettext
-
-# Copy custom Nginx configuration template for React Router
-COPY nginx.conf /etc/nginx/templates/default.conf.template
+# Copy custom Nginx configuration template (kept in a non-default location
+# so nginx's own docker-entrypoint does NOT process it automatically)
+COPY nginx.conf /etc/nginx/nginx.conf.template
 
 # Copy built static files
 COPY --from=builder /app/dist /usr/share/nginx/html
 
-# Railway injects $PORT at runtime; envsubst replaces it in the nginx config
+# Copy and make executable the startup script
+COPY start.sh /start.sh
+RUN chmod +x /start.sh
+
+# Remove the default nginx config to avoid conflicts
+RUN rm -f /etc/nginx/conf.d/default.conf
+
+# Railway injects $PORT at runtime; default to 3030 for local testing
 ENV PORT=3030
 EXPOSE 3030
 
-CMD ["/bin/sh", "-c", "envsubst '${PORT}' < /etc/nginx/templates/default.conf.template > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"]
+# Override the default nginx entrypoint entirely
+ENTRYPOINT []
+CMD ["/start.sh"]
