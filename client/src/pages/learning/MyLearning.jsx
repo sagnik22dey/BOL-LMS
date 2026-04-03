@@ -3,15 +3,21 @@ import { Link } from 'react-router-dom';
 import { useCourseStore } from '../../store/courseStore';
 
 const MyLearning = () => {
-  const { courses, fetchCourses, loading } = useCourseStore();
+  const { myLearningCourses, fetchMyLearningCourses, loading, myEnrollments } = useCourseStore();
   const [tab, setTab] = useState(0);
 
-  useEffect(() => { fetchCourses(); }, [fetchCourses]);
+  useEffect(() => { fetchMyLearningCourses(); }, [fetchMyLearningCourses]);
 
-  const inProgress = courses.filter((c) => c.is_published);
-  const completed = courses.filter((c) => false); // Always empty in original code?
+  const inProgress = myLearningCourses.filter((c) => c.is_published);
+  const completed = myLearningCourses.filter((c) => {
+    const enrollment = myEnrollments.find(e => e.course_id === c.id);
+    return enrollment && enrollment.progress >= 100;
+  }); // Fixed completed check if enrollment has progress
 
-  const displayed = tab === 0 ? inProgress : completed;
+  const displayed = tab === 0 ? inProgress.filter(c => {
+    const enrollment = myEnrollments.find(e => e.course_id === c.id);
+    return !enrollment || enrollment.progress < 100;
+  }) : completed;
 
   return (
     <div className="bg-background font-body text-on-surface w-full min-h-screen">
@@ -58,8 +64,9 @@ const MyLearning = () => {
               /* Active Course Grid */
               <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 {displayed.map((course, idx) => {
-                  const progress = Math.floor(Math.random() * 80) + 10;
-                  const isCompleted = tab === 1;
+                  const enrollment = myEnrollments.find(e => e.course_id === course.id);
+                  const progress = enrollment ? Math.floor(enrollment.progress) : 0;
+                  const isCompleted = tab === 1 || progress >= 100;
                   const dashOffset = 188.4 - (188.4 * progress) / 100;
                   
                   return (

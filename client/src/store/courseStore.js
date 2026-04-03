@@ -3,6 +3,8 @@ import api from '../api/axios';
 
 export const useCourseStore = create((set, get) => ({
   courses: [],
+  myLearningCourses: [],
+  myEnrollments: [],
   currentCourse: null,
   loading: false,
   error: null,
@@ -14,6 +16,20 @@ export const useCourseStore = create((set, get) => ({
       set({ courses: response.data || [], loading: false });
     } catch (error) {
       set({ error: error.response?.data?.error || 'Failed to fetch courses', loading: false });
+    }
+  },
+
+  fetchMyLearningCourses: async () => {
+    set({ loading: true, error: null });
+    try {
+      const response = await api.get('/api/learning/my-courses');
+      set({ 
+        myLearningCourses: response.data?.courses || [], 
+        myEnrollments: response.data?.enrollments || [],
+        loading: false 
+      });
+    } catch (error) {
+      set({ error: error.response?.data?.error || 'Failed to fetch my learning courses', loading: false });
     }
   },
 

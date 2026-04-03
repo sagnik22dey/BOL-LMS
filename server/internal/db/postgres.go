@@ -231,6 +231,9 @@ func migrate() {
 
 	ALTER TABLE user_course_assignments ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
 	ALTER TABLE course_bundle_users ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+
+	ALTER TABLE courses ADD COLUMN IF NOT EXISTS instructor_name TEXT NOT NULL DEFAULT '';
+	ALTER TABLE courses ADD COLUMN IF NOT EXISTS instructor_bio TEXT NOT NULL DEFAULT '';
 	`
 	if _, err := Pool.Exec(context.Background(), alterSchema); err != nil {
 		log.Fatalf("Alter schema failed: %v", err)

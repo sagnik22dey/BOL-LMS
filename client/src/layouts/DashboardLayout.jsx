@@ -17,6 +17,8 @@ const DashboardLayout = () => {
   
   const avatarRef = useRef(null);
 
+  const isCourseView = /^\/dashboard\/learning\/[^/]+$/.test(location.pathname);
+
   useEffect(() => {
     if (user && user.role !== 'super_admin') {
       fetchMyOrg().then(setMyOrg);
@@ -29,7 +31,6 @@ const DashboardLayout = () => {
     }
   }, [user, fetchCart]);
 
-  // Click outside to close avatar menu
   useEffect(() => {
     const handleClickOutside = (event) => {
       if (avatarRef.current && !avatarRef.current.contains(event.target)) {
@@ -72,8 +73,7 @@ const DashboardLayout = () => {
 
   return (
     <div className="bg-background text-on-surface font-body min-h-screen selection:bg-primary-container selection:text-on-primary-container">
-      {/* Top NavBar */}
-      <nav className="fixed top-0 w-full z-50 bg-white/80 backdrop-blur-md shadow-sm h-20 border-b border-surface-dim">
+      <nav className="fixed top-0 w-full z-50 bg-white/80 backdrop-blur-md shadow-sm h-16 border-b border-surface-dim">
         <div className="flex items-center justify-between px-4 md:px-8 h-full max-w-full mx-auto">
           <div className="flex items-center gap-12">
             <RouterLink to="/" className="text-2xl font-bold tracking-tighter text-primary font-headline flex items-center gap-2">
@@ -81,18 +81,19 @@ const DashboardLayout = () => {
               <span className="hidden sm:inline">BOL-LMS</span>
             </RouterLink>
 
-            {/* Desktop Navigation */}
-            <div className="hidden lg:flex items-center gap-8 font-headline text-sm font-semibold tracking-tight">
-              {menuItems.map((item) => (
-                <RouterLink 
-                  key={item.text} 
-                  to={item.path}
-                  className={`transition-colors duration-200 pb-1 ${isActive(item.path) ? 'text-primary border-b-2 border-primary' : 'text-on-surface-variant hover:text-primary'}`}
-                >
-                  {item.text}
-                </RouterLink>
-              ))}
-            </div>
+            {!isCourseView && (
+              <div className="hidden lg:flex items-center gap-8 font-headline text-sm font-semibold tracking-tight">
+                {menuItems.map((item) => (
+                  <RouterLink 
+                    key={item.text} 
+                    to={item.path}
+                    className={`transition-colors duration-200 pb-1 ${isActive(item.path) ? 'text-primary border-b-2 border-primary' : 'text-on-surface-variant hover:text-primary'}`}
+                  >
+                    {item.text}
+                  </RouterLink>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="flex items-center gap-4">
@@ -115,7 +116,6 @@ const DashboardLayout = () => {
               </RouterLink>
             )}
 
-            {/* User Dropdown */}
             <div className="relative" ref={avatarRef}>
               <button 
                 onClick={() => setAvatarMenuOpen(!avatarMenuOpen)}
@@ -131,7 +131,6 @@ const DashboardLayout = () => {
                 <span className="material-symbols-outlined text-sm text-outline hidden md:block">expand_more</span>
               </button>
 
-              {/* Dropdown Menu */}
               {avatarMenuOpen && (
                 <div className="absolute top-12 right-0 mt-2 w-56 bg-surface-container-lowest rounded-2xl shadow-xl border border-surface-dim overflow-hidden animate-[fadeInDown_0.15s_ease-out]">
                   <div className="p-4 border-b border-surface-dim/50 bg-surface-bright/50">
@@ -166,7 +165,6 @@ const DashboardLayout = () => {
               )}
             </div>
 
-            {/* Mobile Menu Toggle */}
             <button 
                onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
                className="lg:hidden material-symbols-outlined p-2 hover:bg-surface-container-low rounded-full transition-colors"
@@ -177,19 +175,24 @@ const DashboardLayout = () => {
         </div>
       </nav>
 
-      {/* Main Content */}
-      <main className="pt-20 min-h-screen">
-        <div className="p-4 md:p-8 lg:p-12 animate-[fadeInUp_0.3s_ease-out]">
+      {isCourseView ? (
+        <main className="pt-16" style={{ height: '100vh' }}>
           <Outlet />
-        </div>
-      </main>
-      
-      {/* Footer */}
-      <footer className="bg-surface-container-lowest w-full py-8 border-t border-surface-dim">
-        <div className="max-w-7xl mx-auto px-8 flex justify-center text-center items-center">
-          <p className="font-inter text-xs tracking-wide text-on-surface-variant">© {new Date().getFullYear()} BOL-LMS. Elevating Intellectual Curiosity.</p>
-        </div>
-      </footer>
+        </main>
+      ) : (
+        <>
+          <main className="pt-16 flex flex-col" style={{ minHeight: '100vh' }}>
+            <div className="flex-1 p-4 md:p-8 lg:p-12 animate-[fadeInUp_0.3s_ease-out]">
+              <Outlet />
+            </div>
+          </main>
+          <footer className="bg-surface-container-lowest w-full py-8 border-t border-surface-dim">
+            <div className="max-w-7xl mx-auto px-8 flex justify-center text-center items-center">
+              <p className="font-inter text-xs tracking-wide text-on-surface-variant">© {new Date().getFullYear()} BOL-LMS. Elevating Intellectual Curiosity.</p>
+            </div>
+          </footer>
+        </>
+      )}
     </div>
   );
 };

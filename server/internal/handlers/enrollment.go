@@ -82,11 +82,41 @@ func ListMyEnrollments(c *gin.Context) {
 
 	enrollments := []models.Enrollment{}
 	var courseIDs []uuid.UUID
+	courseIDMap := make(map[uuid.UUID]bool)
+
 	for eRows.Next() {
 		var e models.Enrollment
 		if err := eRows.Scan(&e.ID, &e.UserID, &e.CourseID, &e.Progress, &e.CreatedAt, &e.UpdatedAt); err == nil {
 			enrollments = append(enrollments, e)
-			courseIDs = append(courseIDs, e.CourseID)
+			if !courseIDMap[e.CourseID] {
+				courseIDs = append(courseIDs, e.CourseID)
+				courseIDMap[e.CourseID] = true
+			}
+		}
+	}
+
+	aRows, err := db.Pool.Query(ctx,
+		`SELECT course_id FROM user_course_assignments WHERE user_id=$1`, userID)
+	if err == nil {
+		defer aRows.Close()
+		for aRows.Next() {
+			var cID uuid.UUID
+			if err := aRows.Scan(&cID); err == nil {
+				if !courseIDMap[cID] {
+					courseIDs = append(courseIDs, cID)
+					courseIDMap[cID] = true
+					
+					// Create dummy enrollment so it has progress=0
+					enrollments = append(enrollments, models.Enrollment{
+						ID:        uuid.Nil,
+						UserID:    userID,
+						CourseID:  cID,
+						Progress:  0,
+						CreatedAt: time.Now(),
+						UpdatedAt: time.Now(),
+					})
+				}
+			}
 		}
 	}
 
@@ -96,7 +126,7 @@ func ListMyEnrollments(c *gin.Context) {
 	}
 
 	cRows, err := db.Pool.Query(ctx,
-		`SELECT id, organization_id, title, description, thumbnail_key, modules, is_published, is_public, price, currency, validity_days, created_at, updated_at
+		`SELECT id, organization_id, title, description, thumbnail_key, modules, is_published, is_public, price, currency, validity_days, instructor_name, instructor_bio, created_at, updated_at
 		 FROM courses WHERE id = ANY($1)`, courseIDs)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not fetch courses"})

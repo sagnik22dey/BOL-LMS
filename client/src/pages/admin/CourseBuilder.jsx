@@ -87,7 +87,9 @@ const CourseBuilder = () => {
     title: '',
     description: '',
     modules: [],
-    is_public: false
+    is_public: false,
+    instructor_name: '',
+    instructor_bio: ''
   });
 
   const [editDialogOpen, setEditDialogOpen] = useState(false);
@@ -107,7 +109,9 @@ const CourseBuilder = () => {
         title: currentCourse.title || '',
         description: currentCourse.description || '',
         modules: currentCourse.modules || [],
-        is_public: currentCourse.is_public || false
+        is_public: currentCourse.is_public || false,
+        instructor_name: currentCourse.instructor_name || '',
+        instructor_bio: currentCourse.instructor_bio || ''
       });
     }
   }, [currentCourse]);
@@ -217,6 +221,8 @@ const CourseBuilder = () => {
         title: courseData.title,
         description: courseData.description,
         is_public: courseData.is_public,
+        instructor_name: courseData.instructor_name,
+        instructor_bio: courseData.instructor_bio,
         modules: courseData.modules.map((mod, modIdx) => ({
             ...mod,
             order: modIdx,
@@ -370,6 +376,26 @@ const CourseBuilder = () => {
           rows={3}
           value={courseData.description}
           onChange={(e) => setCourseData({ ...courseData, description: e.target.value })}
+          sx={{ mb: 3 }}
+        />
+        <TextField 
+          fullWidth 
+          label="Instructor Name" 
+          variant="outlined" 
+          value={courseData.instructor_name}
+          onChange={(e) => setCourseData({ ...courseData, instructor_name: e.target.value })}
+          placeholder="e.g. Dr. Jane Smith"
+          sx={{ mb: 3 }}
+        />
+        <TextField 
+          fullWidth 
+          label="Instructor Bio" 
+          variant="outlined" 
+          multiline
+          rows={2}
+          value={courseData.instructor_bio}
+          onChange={(e) => setCourseData({ ...courseData, instructor_bio: e.target.value })}
+          placeholder="Brief bio about the instructor..."
           sx={{ mb: 2 }}
         />
         <FormControlLabel
@@ -415,16 +441,16 @@ const CourseBuilder = () => {
               {editingMaterial.type === 'video' && (
                 <Box>
                   <TextField 
-                    label="Video Source Key / URL" 
+                    label="YouTube URL / Video Key" 
                     fullWidth 
                     value={editingMaterial.file_key || ''} 
                     onChange={(e) => setEditingMaterial({ ...editingMaterial, file_key: e.target.value })} 
-                    helperText="Enter MinIO key or external video URL"
+                    helperText="Paste YouTube Video URL or enter MinIO storage key"
                     sx={{ mb: 2 }}
                   />
                   <Button variant="outlined" component="label" size="small" disabled={uploadingFile} sx={{ minWidth: 200 }}>
                     {uploadingFile ? <CircularProgress size={20} sx={{ mr: 1 }} /> : <AddIcon sx={{ mr: 1 }} />}
-                    {uploadingFile ? `Uploading ${uploadProgress}% (${uploadTimeLeft})` : 'Upload Video'}
+                    {uploadingFile ? `Uploading ${uploadProgress}% (${uploadTimeLeft})` : 'Upload Custom Video'}
                     <input type="file" hidden accept="video/*" onChange={(e) => handleFileUpload(e.target.files[0], 'video')} />
                   </Button>
                 </Box>

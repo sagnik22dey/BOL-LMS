@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Link as RouterLink } from 'react-router-dom';
+import { Link as RouterLink, useNavigate } from 'react-router-dom';
 import { useCourseStore } from '../../store/courseStore';
 import { useAuthStore } from '../../store/authStore';
 import useCartStore from '../../store/cartStore';
@@ -83,19 +83,20 @@ const CourseCard = ({ course, isAdmin, onTogglePublish }) => {
 };
 
 const Courses = () => {
+  const navigate = useNavigate();
   const { user } = useAuthStore();
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
   const { courses, fetchCourses, createCourse, loading, error } = useCourseStore();
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
-  const [formData, setFormData] = useState({ title: '', description: '', price: 0, currency: 'INR', validity_days: '' });
+  const [formData, setFormData] = useState({ title: '', description: '', price: 0, currency: 'INR', validity_days: '', instructor_name: '', instructor_bio: '' });
   const [formError, setFormError] = useState('');
 
   useEffect(() => { fetchCourses(); }, [fetchCourses]);
 
   const handleClose = () => {
     setOpen(false);
-    setFormData({ title: '', description: '', price: 0, currency: 'INR', validity_days: '' });
+    setFormData({ title: '', description: '', price: 0, currency: 'INR', validity_days: '', instructor_name: '', instructor_bio: '' });
     setFormError('');
   };
 
@@ -114,7 +115,7 @@ const Courses = () => {
     const created = await createCourse(payload);
     if (created) {
       handleClose();
-      window.location.href = `/dashboard/courses/builder/${created.id}`;
+      navigate(`/dashboard/courses/builder/${created.id}`);
     } else {
       setFormError(useCourseStore.getState().error || 'Failed to create course.');
     }
@@ -215,6 +216,26 @@ const Courses = () => {
                   value={formData.description} onChange={(e) => setFormData({...formData, description: e.target.value})}
                   className="w-full bg-surface-container-low border border-surface-dim rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary focus:border-primary font-body resize-none transition-shadow"
                   placeholder="Brief overview of the course content..."
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-sm font-bold text-on-surface font-headline">Instructor Name</label>
+                <input 
+                  type="text" 
+                  value={formData.instructor_name} onChange={(e) => setFormData({...formData, instructor_name: e.target.value})}
+                  className="w-full bg-surface-container-low border border-surface-dim rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary focus:border-primary font-body transition-shadow"
+                  placeholder="e.g. Dr. Jane Smith"
+                />
+              </div>
+
+              <div className="flex flex-col gap-1.5">
+                <label className="text-sm font-bold text-on-surface font-headline">Instructor Bio</label>
+                <textarea 
+                  rows="2"
+                  value={formData.instructor_bio} onChange={(e) => setFormData({...formData, instructor_bio: e.target.value})}
+                  className="w-full bg-surface-container-low border border-surface-dim rounded-xl px-4 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary focus:border-primary font-body resize-none transition-shadow"
+                  placeholder="Brief bio about the instructor..."
                 />
               </div>
 

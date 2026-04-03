@@ -241,3 +241,12 @@ img {
   .section-gap { margin-top: 24px; }
   .section-gap-lg { margin-top: 32px; }
 }
+
+/* Hide scrollbar */
+.hide-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}

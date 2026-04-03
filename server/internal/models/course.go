@@ -38,16 +38,21 @@ type Course struct {
 	Price          int             `json:"price"`
 	Currency       string          `json:"currency"`
 	ValidityDays   *int            `json:"validity_days,omitempty"`
+	InstructorName string          `json:"instructor_name"`
+	InstructorBio  string          `json:"instructor_bio"`
+	IsEnrolled     bool            `json:"is_enrolled"`
 	CreatedAt      time.Time       `json:"created_at"`
 	UpdatedAt      time.Time       `json:"updated_at"`
 }
 
 type CreateCourseRequest struct {
-	Title        string `json:"title" binding:"required"`
-	Description  string `json:"description"`
-	Price        int    `json:"price"`
-	Currency     string `json:"currency"`
-	ValidityDays *int   `json:"validity_days,omitempty"`
+	Title          string `json:"title" binding:"required"`
+	Description    string `json:"description"`
+	Price          int    `json:"price"`
+	Currency       string `json:"currency"`
+	ValidityDays   *int   `json:"validity_days,omitempty"`
+	InstructorName string `json:"instructor_name"`
+	InstructorBio  string `json:"instructor_bio"`
 }
 
 type PresignRequest struct {

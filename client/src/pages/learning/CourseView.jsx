@@ -1,41 +1,60 @@
-import { useState, useEffect } from 'react';
-import { useParams } from 'react-router-dom';
+import { useState, useEffect, useRef } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../api/axios';
 import { useAuthStore } from '../../store/authStore';
-import { useNavigate } from 'react-router-dom';
+import useCartStore from '../../store/cartStore';
 import CommentSection from '../../components/learning/CommentSection';
 import DocumentViewer from '../../components/learning/DocumentViewer';
 import QuizView from '../../components/learning/QuizView';
 import AssignmentView from '../../components/learning/AssignmentView';
+import CustomVideoPlayer from '../../components/learning/CustomVideoPlayer';
+
+const NAV_H = 64;
+
+const MaterialIcon = ({ type }) => {
+  const icons = { video: 'play_circle', text: 'article', quiz: 'quiz', assignment: 'assignment', pdf: 'picture_as_pdf' };
+  return <span className="material-symbols-outlined text-[18px]">{icons[type] || 'description'}</span>;
+};
 
 const CourseView = () => {
   const { courseId } = useParams();
   const navigate = useNavigate();
   const { user } = useAuthStore();
+  const { addToCart, loading: cartLoading } = useCartStore();
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
+
   const [course, setCourse] = useState(null);
   const [activeMaterial, setActiveMaterial] = useState(null);
   const [activeModule, setActiveModule] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [fileUrl, setFileUrl] = useState('');
-  const [lowerTab, setLowerTab] = useState(0);
+  const [tab, setTab] = useState(0);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [expandedModules, setExpandedModules] = useState({});
+  const [hoveringContent, setHoveringContent] = useState(false);
+
+  const toggleRef = useRef(null);
 
   useEffect(() => {
     const fetchCourse = async () => {
       try {
         setLoading(true);
-        const response = await api.get(`/api/courses/${courseId}`);
-        setCourse(response.data);
-        if (response.data.modules && response.data.modules.length > 0) {
-          const firstMod = response.data.modules[0];
+        const { data } = await api.get(`/api/courses/${courseId}`);
+        setCourse(data);
+        if (data.is_enrolled !== false && data.modules?.length > 0) {
+          const firstMod = data.modules[0];
           setActiveModule(firstMod);
-          if (firstMod.materials && firstMod.materials.length > 0) {
-            setActiveMaterial(firstMod.materials[0]);
-          }
+          if (firstMod.materials?.length > 0) setActiveMaterial(firstMod.materials[0]);
+          const initial = {};
+          data.modules.forEach((m) => { initial[m.id] = true; });
+          setExpandedModules(initial);
+        } else if (data.locked_module_preview?.length > 0) {
+          const initial = {};
+          data.locked_module_preview.forEach((_, i) => { initial[`locked-${i}`] = true; });
+          setExpandedModules(initial);
         }
-      } catch (err) {
-        console.error('Failed to fetch course:', err);
+      } catch {
         setError('Failed to load course details.');
       } finally {
         setLoading(false);
@@ -46,15 +65,24 @@ const CourseView = () => {
 
   useEffect(() => {
     const fetchFileUrl = async () => {
-      if (activeMaterial && activeMaterial.file_key && activeMaterial.type !== 'text') {
+      if (activeMaterial?.file_key && activeMaterial.type !== 'text') {
+        const isHttp = activeMaterial.file_key.startsWith('http') || activeMaterial.file_key.includes('youtube.com') || activeMaterial.file_key.includes('youtu.be');
+        if (isHttp) {
+          // Ensure it has a protocol if it's missing
+          let finalUrl = activeMaterial.file_key;
+          if (!finalUrl.startsWith('http')) {
+            finalUrl = 'https://' + finalUrl;
+          }
+          setFileUrl(finalUrl);
+          return;
+        }
         try {
           const bucket = activeMaterial.type === 'video' ? 'bol-lms-videos' : 'bol-lms-documents';
-          const response = await api.get('/api/learning/presign-get', {
+          const { data } = await api.get('/api/learning/presign-get', {
             params: { object_name: activeMaterial.file_key, bucket }
           });
-          setFileUrl(response.data.url);
-        } catch (err) {
-          console.error('Failed to fetch file URL:', err);
+          setFileUrl(data.url);
+        } catch {
           setFileUrl('');
         }
       } else {
@@ -69,205 +97,472 @@ const CourseView = () => {
     setActiveMaterial(mat);
   };
 
-  if (loading) return <div className="flex justify-center p-20"><div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin"></div></div>;
+  const toggleModule = (id) => {
+    setExpandedModules((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const handleAddToCart = () => addToCart('course', courseId);
+
+  if (loading) return (
+    <div className="flex items-center justify-center" style={{ height: `calc(100vh - ${NAV_H}px)` }}>
+      <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+    </div>
+  );
   if (error) return <div className="m-8 p-4 bg-error-container text-on-error-container rounded-lg font-body">{error}</div>;
   if (!course) return <div className="m-8 p-4 bg-surface-container text-on-surface rounded-lg font-body">Course not found</div>;
 
-  const renderMaterialPreview = () => {
+  const isEnrolled = isAdmin || course.is_enrolled === true;
+  const isVideo = activeMaterial?.type === 'video';
+  const instructorInitial = course.instructor_name?.charAt(0).toUpperCase() || 'I';
+  const instructorName = course.instructor_name || 'Instructor';
+  
+  const flatMaterials = isEnrolled ? (course.modules || []).flatMap(mod => (mod.materials || []).map(mat => ({ mod, mat }))) : [];
+  const currentIndex = flatMaterials.findIndex(item => item.mat.id === activeMaterial?.id);
+  const hasNext = currentIndex >= 0 && currentIndex < flatMaterials.length - 1;
+  const hasPrev = currentIndex > 0;
+
+  const handleNext = () => {
+    if (hasNext) {
+      const next = flatMaterials[currentIndex + 1];
+      handleSelectMaterial(next.mod, next.mat);
+    }
+  };
+
+  const handlePrev = () => {
+    if (hasPrev) {
+      const prev = flatMaterials[currentIndex - 1];
+      handleSelectMaterial(prev.mod, prev.mat);
+    }
+  };
+  
+  const SIDEBAR_W = 380;
+
+  const renderPlayer = () => {
+    if (!isEnrolled) {
+      return (
+        <div className="flex flex-col items-center justify-center w-full h-full bg-gradient-to-br from-gray-900 to-gray-800 text-center gap-5 p-8">
+          <div className="w-16 h-16 rounded-full bg-white/10 flex items-center justify-center">
+            <span className="material-symbols-outlined text-4xl text-white/60">lock</span>
+          </div>
+          <div className="max-w-md">
+            <h2 className="font-headline font-extrabold text-xl text-white mb-2">Course Content Locked</h2>
+            <p className="text-white/50 font-body text-sm leading-relaxed">
+              Purchase this course to unlock all modules, videos, and materials.
+            </p>
+          </div>
+          <button
+            onClick={handleAddToCart}
+            disabled={cartLoading}
+            className="flex items-center gap-2 px-5 py-2.5 bg-primary text-white font-headline font-bold rounded-lg hover:bg-primary/90 transition-all disabled:opacity-60"
+          >
+            {cartLoading
+              ? <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+              : <span className="material-symbols-outlined text-[18px]">shopping_cart</span>
+            }
+            {course.price > 0 ? `Add to Cart — ${course.currency} ${course.price}` : 'Enroll for Free'}
+          </button>
+        </div>
+      );
+    }
+
     if (!activeMaterial) return (
-      <div className="flex items-center justify-center h-full bg-black/90 text-white font-headline text-lg tracking-wide rounded-b-xl lg:rounded-br-none lg:rounded-bl-xl overflow-hidden">
-        No materials to display
+      <div className="flex items-center justify-center h-full bg-gray-950 text-white/40 font-headline text-sm">
+        Select a lesson to begin
       </div>
     );
 
     switch (activeMaterial.type) {
-      case 'video':
+      case 'video': {
+        let videoUrl = fileUrl;
+        const isHttpUrl = activeMaterial.file_key?.startsWith('http') || activeMaterial.file_key?.includes('youtube.com') || activeMaterial.file_key?.includes('youtu.be');
+        
+        if (!videoUrl && isHttpUrl) {
+          videoUrl = activeMaterial.file_key;
+          if (!videoUrl.startsWith('http')) {
+            videoUrl = 'https://' + videoUrl;
+          }
+        }
+        
+        const isYouTube = activeMaterial.file_key?.includes('youtube.com') || activeMaterial.file_key?.includes('youtu.be');
         return (
-          <video
-            className="w-full h-full object-cover"
-            controls
+          <CustomVideoPlayer 
             key={activeMaterial.file_key}
-            src={fileUrl || (activeMaterial.file_key?.startsWith('http') ? activeMaterial.file_key : '')}
-          >
-            Your browser does not support the video tag.
-          </video>
+            url={videoUrl}
+            isYouTube={isYouTube}
+            hasNext={hasNext}
+            hasPrev={hasPrev}
+            onNext={handleNext}
+            onPrev={handlePrev}
+            onEnded={handleNext}
+          />
         );
+      }
       case 'text':
         return (
-          <div className="bg-surface-container-lowest p-8 md:p-16 h-full overflow-y-auto w-full border border-surface-container-highest">
-            <div className="whitespace-pre-wrap leading-relaxed text-on-surface-variant font-body">
+          <div className="w-full h-full overflow-y-auto bg-white p-8 md:p-12">
+            <div className="max-w-3xl mx-auto whitespace-pre-wrap leading-relaxed text-gray-700 font-body">
               {activeMaterial.content}
             </div>
           </div>
         );
       case 'quiz':
-        return <div className="bg-surface-container-lowest border border-surface-container-highest h-full overflow-y-auto w-full p-4 md:p-8"><QuizView quizId={activeMaterial.file_key} /></div>;
-      case 'assignment':
-        return <div className="bg-surface-container-lowest border border-surface-container-highest h-full overflow-y-auto w-full p-4 md:p-8"><AssignmentView assignmentId={activeMaterial.file_key} /></div>;
-      default:
         return (
-          <div className="h-full bg-surface-container-lowest border border-surface-container-highest w-full flex flex-col items-center justify-center p-8 text-center overflow-y-auto">
-            {activeMaterial.file_key && fileUrl ? (
-               <div className="w-full h-full relative z-0"><DocumentViewer url={fileUrl} fileType={activeMaterial.type} /></div>
-            ) : fileUrl === '' ? (
-              <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
-            ) : (
-              <div className="flex flex-col items-center">
-                <span className="material-symbols-outlined text-6xl text-outline mb-4">description</span>
-                <h3 className="text-xl font-headline font-bold text-on-surface mb-2">{activeMaterial.title}</h3>
-                <p className="text-on-surface-variant">File not available for viewing.</p>
-              </div>
-            )}
+          <div className="w-full h-full overflow-y-auto bg-white p-6 md:p-10">
+            <QuizView quizId={activeMaterial.file_key} />
+          </div>
+        );
+      case 'assignment':
+        return (
+          <div className="w-full h-full overflow-y-auto bg-white p-6 md:p-10">
+            <AssignmentView assignmentId={activeMaterial.file_key} />
+          </div>
+        );
+      default:
+        if (activeMaterial.file_key && fileUrl) {
+          return <div className="w-full h-full"><DocumentViewer url={fileUrl} fileType={activeMaterial.type} /></div>;
+        }
+        if (fileUrl === '' && activeMaterial.file_key) {
+          return (
+            <div className="flex items-center justify-center h-full bg-gray-950">
+              <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+            </div>
+          );
+        }
+        return (
+          <div className="flex flex-col items-center justify-center h-full bg-gray-950 text-center gap-3">
+            <span className="material-symbols-outlined text-5xl text-white/20">description</span>
+            <p className="text-white/40 font-body text-sm">{activeMaterial.title}</p>
           </div>
         );
     }
   };
 
-  return (
-    <div className="flex flex-col h-full w-full">
-      {/* Header controls */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
-        <button 
-          onClick={() => navigate('/dashboard/courses')}
-          className="flex items-center gap-2 text-on-surface-variant hover:text-primary transition-colors font-headline font-bold text-sm w-fit"
-        >
-          <span className="material-symbols-outlined text-[20px]">arrow_back</span>
-          Back to Courses
-        </button>
+  const modules = isEnrolled ? (course.modules || []) : (course.locked_module_preview || []);
 
-        {isAdmin && (
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="bg-primary/10 text-primary px-4 py-2 rounded-xl flex items-center gap-2 font-headline tracking-wide text-xs font-bold uppercase border border-primary/20">
-              <span className="material-symbols-outlined text-[18px]">visibility</span>
-              ADMIN PREVIEW MODE
-            </div>
-            <button 
-              onClick={() => navigate(`/dashboard/courses/${courseId}/assessments`)}
-              className="px-4 py-2 bg-primary text-white text-sm font-bold rounded-xl hover:bg-primary/90 transition-colors shadow-sm flex items-center gap-2"
+  return (
+    <div
+      className="flex flex-col bg-white"
+      style={{ height: `calc(100vh - ${NAV_H}px)` }}
+    >
+      {/* ═══ Top course bar ═══ */}
+      <div className="flex-shrink-0 h-12 bg-gray-900 text-white flex items-center px-4 gap-4 z-30 border-b border-gray-800">
+        <button
+          onClick={() => navigate('/dashboard/courses')}
+          className="flex items-center gap-1.5 text-white/70 hover:text-white transition-colors text-sm font-medium"
+        >
+          <span className="material-symbols-outlined text-[18px]">arrow_back</span>
+          <span className="hidden sm:inline">Back</span>
+        </button>
+        <div className="h-5 w-px bg-white/20" />
+        <p className="text-sm font-semibold truncate flex-1">{course.title}</p>
+
+        <div className="flex items-center gap-2">
+          {isAdmin && (
+            <>
+              <span className="hidden md:flex items-center gap-1 bg-primary/20 text-primary-fixed-dim px-2 py-1 rounded text-[10px] font-bold uppercase tracking-wider">
+                Admin Preview
+              </span>
+              <button
+                onClick={() => navigate(`/dashboard/courses/${courseId}/assessments`)}
+                className="flex items-center gap-1 px-2 py-1 bg-white/10 text-white text-xs font-semibold rounded hover:bg-white/20 transition-colors"
+              >
+                <span className="material-symbols-outlined text-[14px]">assignment_turned_in</span>
+                <span className="hidden sm:inline">Submissions</span>
+              </button>
+            </>
+          )}
+          {!isAdmin && !isEnrolled && (
+            <button
+              onClick={handleAddToCart}
+              disabled={cartLoading}
+              className="flex items-center gap-1.5 px-3 py-1 bg-primary text-white text-xs font-bold rounded hover:bg-primary/90 transition-colors disabled:opacity-60"
             >
-              <span className="material-symbols-outlined text-[18px]">assignment_turned_in</span>
-              View Student Submissions
+              {cartLoading
+                ? <span className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                : <span className="material-symbols-outlined text-[14px]">shopping_cart</span>
+              }
+              {course.price > 0 ? `${course.currency} ${course.price}` : 'Enroll Free'}
             </button>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
-      <div className="flex flex-col lg:flex-row flex-1 bg-surface border border-surface-dim shadow-sm rounded-2xl overflow-hidden min-h-[calc(100vh-200px)]">
-        {/* Center Content: Player & Tabs */}
-        <div className="flex-1 flex flex-col bg-surface overflow-y-auto">
-        {/* Video Player Section */}
-        <section className={`bg-inverse-surface w-full relative ${activeMaterial?.type === 'video' ? 'aspect-video' : 'h-[60vh] min-h-[400px]'}`}>
-          {renderMaterialPreview()}
-        </section>
+      {/* ═══ Main content: left + right ═══ */}
+      <div className="flex flex-1 overflow-hidden relative">
 
-        {/* Content Area: Tabs & Description */}
-        <section className="p-8 lg:p-12 max-w-5xl mx-auto w-full flex-grow">
-          <div className="flex items-center gap-8 border-b border-surface-dim mb-8 overflow-x-auto hide-scrollbar">
-            <button 
-              onClick={() => setLowerTab(0)}
-              className={`pb-4 text-sm font-bold font-headline whitespace-nowrap transition-colors ${lowerTab === 0 ? 'text-primary border-b-2 border-primary' : 'text-outline hover:text-on-surface'}`}>
-              Overview
-            </button>
-            <button 
-              onClick={() => setLowerTab(1)}
-              className={`pb-4 text-sm font-bold font-headline whitespace-nowrap transition-colors ${lowerTab === 1 ? 'text-primary border-b-2 border-primary' : 'text-outline hover:text-on-surface'}`}>
-              Q&A / Discussions
-            </button>
+        {/* ── LEFT column — single vertical scroll ── */}
+        <div
+          className="flex-1 overflow-y-auto bg-white transition-all duration-300 ease-in-out"
+          style={{ minWidth: 0 }}
+          onMouseEnter={() => setHoveringContent(true)}
+          onMouseLeave={() => setHoveringContent(false)}
+        >
+          {/* Player */}
+          <div
+            className="w-full bg-gray-950 relative"
+            style={
+              isVideo
+                ? { aspectRatio: '16/9', maxHeight: `calc(100vh - ${NAV_H + 48}px)` }
+                : { height: '60vh', minHeight: 300 }
+            }
+          >
+            {renderPlayer()}
+
+            {!sidebarOpen && (
+              <button
+                ref={toggleRef}
+                onClick={() => setSidebarOpen(true)}
+                className={`absolute right-0 top-1/2 -translate-y-1/2 z-20 flex items-center gap-1 px-2 py-6 rounded-l-lg transition-all duration-200 ${
+                  hoveringContent
+                    ? 'opacity-100 translate-x-0'
+                    : 'opacity-0 translate-x-2 pointer-events-none'
+                } bg-gray-800/90 hover:bg-gray-700 text-white shadow-lg backdrop-blur-sm`}
+                title="Show course content"
+              >
+                <span className="material-symbols-outlined text-lg">chevron_left</span>
+              </button>
+            )}
           </div>
 
-          {lowerTab === 0 && (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-12">
-              <div className="md:col-span-2 space-y-6">
-                <h2 className="text-3xl font-extrabold font-headline tracking-tight text-primary">
-                  {activeMaterial?.title || 'Material Overview'}
-                </h2>
-                <p className="text-on-surface-variant leading-relaxed font-body text-lg">
-                  {course.description || "Course description goes here. Learn the foundational concepts through curated material."}
-                </p>
-                <div className="space-y-4 pt-4">
-                  <h3 className="font-headline font-bold text-lg text-on-surface">Module Details</h3>
-                  <p className="text-on-surface-variant">
-                    {activeModule ? activeModule.title : 'Select a module to view details.'}
-                  </p>
+          {/* Tab bar */}
+          <div className="sticky top-0 z-10 bg-white border-b border-gray-200 px-4 md:px-6">
+            <div className="flex items-center gap-1 overflow-x-auto hide-scrollbar">
+              {[
+                'Overview',
+                ...(isEnrolled ? ['Q&A'] : []),
+              ].map((label, i) => (
+                <button
+                  key={label}
+                  onClick={() => setTab(i)}
+                  className={`py-3 px-3 text-sm font-bold font-headline whitespace-nowrap border-b-2 transition-colors ${
+                    tab === i
+                      ? 'border-gray-900 text-gray-900'
+                      : 'border-transparent text-gray-500 hover:text-gray-800'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Tab content */}
+          <div className="p-6 md:p-8 lg:p-10 max-w-4xl">
+            {tab === 0 && (
+              <div className="space-y-6">
+                <div>
+                  <h1 className="text-xl md:text-2xl font-extrabold font-headline text-gray-900 mb-1">
+                    {isEnrolled ? (activeMaterial?.title || course.title) : course.title}
+                  </h1>
+                  {isEnrolled && activeModule && (
+                    <p className="text-xs text-gray-400 font-semibold uppercase tracking-wider">
+                      {activeModule.title}
+                    </p>
+                  )}
                 </div>
-              </div>
-              <div className="space-y-8">
-                <div className="bg-surface-container-low p-6 rounded-2xl border border-surface-dim">
-                  <h4 className="font-headline font-bold text-primary mb-4">Instructor</h4>
-                  <div className="flex items-center gap-4 mb-4">
-                    <div className="w-12 h-12 rounded-full overflow-hidden bg-primary-fixed text-primary flex items-center justify-center font-bold text-lg">
-                      {course.creator_name ? course.creator_name.charAt(0).toUpperCase() : 'L'}
-                    </div>
+
+                <p className="text-gray-600 font-body leading-relaxed">
+                  {course.description || 'No description provided.'}
+                </p>
+
+                {!isEnrolled && (
+                  <div className="p-4 bg-amber-50 rounded-lg border border-amber-200 flex items-start gap-3">
+                    <span className="material-symbols-outlined text-amber-500 mt-0.5 text-xl">info</span>
                     <div>
-                      <p className="font-headline font-bold text-on-surface">{course.creator_name || 'Lead Instructor'}</p>
-                      <p className="text-xs text-outline font-medium">Instructor</p>
+                      <p className="font-headline font-bold text-amber-900 mb-0.5 text-sm">Purchase required</p>
+                      <p className="text-amber-800 text-xs">Buy this course to access all modules and materials.</p>
                     </div>
                   </div>
+                )}
+
+                <div className="flex items-center gap-3 py-2">
+                  <div className="w-10 h-10 rounded-full bg-gray-200 text-gray-700 flex items-center justify-center font-bold text-sm font-headline">
+                    {instructorInitial}
+                  </div>
+                  <div>
+                    <p className="font-headline font-bold text-gray-900 text-sm">{instructorName}</p>
+                    <p className="text-xs text-gray-400">Instructor</p>
+                  </div>
                 </div>
-              </div>
-            </div>
-          )}
 
-          {lowerTab === 1 && (
-            <div>
-              {activeModule ? <CommentSection moduleId={activeModule.id} /> : <p className="text-on-surface-variant">Select a module to view notes.</p>}
-            </div>
-          )}
-        </section>
-      </div>
+                {course.instructor_bio && (
+                  <p className="text-sm text-gray-500 font-body leading-relaxed">
+                    {course.instructor_bio}
+                  </p>
+                )}
 
-      {/* Sidebar: Curriculum Navigation */}
-      <aside className="w-full lg:w-96 bg-surface-container-low flex flex-col h-auto lg:h-[calc(100vh-80px)] lg:sticky lg:top-20 z-10 border-l border-surface-dim overflow-hidden">
-        <div className="p-6 border-b border-surface-dim bg-surface-bright shadow-sm">
-          <h2 className="font-headline font-extrabold text-xl text-primary tracking-tight">Course Content</h2>
-          <div className="mt-4 flex flex-col gap-2">
-            <div className="flex justify-between items-center text-xs font-bold text-outline uppercase">
-              <span>Progress</span>
-              <span>Active</span>
-            </div>
-          </div>
-        </div>
-        <div className="flex-1 overflow-y-auto hide-scrollbar flex flex-col">
-          {(course.modules || []).map((mod, modIdx) => (
-            <div key={mod.id || modIdx} className="bg-surface-bright/50 border-b border-surface-dim">
-              <div className="w-full p-5 flex flex-col items-start justify-between">
-                <p className="text-[10px] font-black text-outline uppercase tracking-widest mb-1">Module {modIdx + 1}</p>
-                <p className="font-headline font-bold text-on-surface">{mod.title}</p>
-              </div>
-              
-              <div className="bg-surface-container-lowest flex flex-col border-t border-surface-dim/30 divide-y divide-surface-dim/30">
-                {(mod.materials || []).map((mat) => {
-                  const isActive = activeMaterial?.id === mat.id;
-                  
-                  return (
+                {!isEnrolled && course.price > 0 && (
+                  <div className="flex items-center gap-4 p-5 bg-gray-50 border border-gray-200 rounded-lg">
+                    <div>
+                      <p className="font-headline font-extrabold text-2xl text-gray-900">
+                        {course.currency} {course.price}
+                      </p>
+                      <p className="text-xs text-gray-400">
+                        {course.validity_days ? `${course.validity_days}-day access` : 'Lifetime access'}
+                      </p>
+                    </div>
                     <button
-                      key={mat.id}
-                      onClick={() => handleSelectMaterial(mod, mat)}
-                      className={`px-5 py-4 flex items-center gap-4 transition-colors w-full text-left border-l-4 ${isActive ? 'bg-primary-fixed-dim/30 border-primary' : 'hover:bg-surface-bright border-transparent'}`}
+                      onClick={handleAddToCart}
+                      disabled={cartLoading}
+                      className="ml-auto flex items-center gap-2 px-5 py-2.5 bg-primary text-white font-headline font-bold rounded-lg hover:bg-primary/90 transition-all disabled:opacity-60"
                     >
-                      <span className={`material-symbols-outlined text-lg ${isActive ? 'text-primary' : 'text-outline hover:text-on-surface'}`}>
-                         {mat.type === 'video' ? 'play_circle' : mat.type === 'text' ? 'article' : mat.type === 'quiz' ? 'quiz' : 'assignment'}
-                      </span>
-                      <div className="flex-1">
-                        <p className={`text-sm ${isActive ? 'font-bold text-primary max-w-[200px] truncate' : 'font-medium text-on-surface-variant max-w-[200px] truncate'}`}>
-                          {mat.title}
-                        </p>
-                        <p className="text-[10px] uppercase font-bold text-outline mt-0.5">{mat.type}</p>
-                      </div>
+                      {cartLoading
+                        ? <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        : <span className="material-symbols-outlined text-[18px]">shopping_cart</span>
+                      }
+                      Add to Cart
                     </button>
-                  );
-                })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {tab === 1 && isEnrolled && (
+              <div>
+                {activeModule
+                  ? <CommentSection moduleId={activeModule.id} />
+                  : <p className="text-gray-400 text-sm">Select a module first.</p>
+                }
+              </div>
+            )}
+          </div>
+
+          {/* Footer */}
+          <footer className="bg-gray-900 text-white/60 py-8 px-8">
+            <div className="max-w-4xl flex flex-col sm:flex-row justify-between items-center gap-4">
+              <p className="text-xs tracking-wide">© {new Date().getFullYear()} BOL-LMS. Elevating Intellectual Curiosity.</p>
+              <div className="flex items-center gap-4 text-xs">
+                <span className="hover:text-white cursor-pointer transition-colors">Privacy Policy</span>
+                <span className="hover:text-white cursor-pointer transition-colors">Terms</span>
               </div>
             </div>
-          ))}
-          {(!course.modules || course.modules.length === 0) && (
-            <div className="p-8 text-center text-on-surface-variant font-body text-sm">
-              No modules available for this course.
-            </div>
-          )}
+          </footer>
         </div>
-      </aside>
-    </div>
+
+        {/* ── RIGHT sidebar ── */}
+        <aside
+          className="flex-shrink-0 flex flex-col bg-white border-l border-gray-200 overflow-hidden transition-all duration-300 ease-in-out"
+          style={{
+            width: sidebarOpen ? SIDEBAR_W : 0,
+            minWidth: sidebarOpen ? SIDEBAR_W : 0,
+          }}
+        >
+          {/* Sidebar header */}
+          <div className="flex-shrink-0 flex items-center justify-between px-4 h-12 border-b border-gray-200 bg-white">
+            <h3 className="font-headline font-bold text-sm text-gray-900">Course content</h3>
+            <button
+              onClick={() => setSidebarOpen(false)}
+              className="p-1 rounded hover:bg-gray-100 transition-colors text-gray-500 hover:text-gray-800"
+              title="Close sidebar"
+            >
+              <span className="material-symbols-outlined text-xl">close</span>
+            </button>
+          </div>
+
+          {/* Scrollable modules */}
+          <div className="flex-1 overflow-y-auto">
+            {modules.map((mod, modIdx) => {
+              const modKey = isEnrolled ? mod.id : `locked-${modIdx}`;
+              const isExpanded = expandedModules[modKey] !== false;
+              const materials = mod.materials || [];
+              const completedCount = 0;
+
+              return (
+                <div key={modKey}>
+                  <button
+                    onClick={() => toggleModule(modKey)}
+                    className="w-full h-14 flex items-center justify-between px-4 bg-gray-50 border-b border-gray-200 hover:bg-gray-100 transition-colors text-left flex-shrink-0"
+                  >
+                    <div className="flex-1 min-w-0 pr-2">
+                      <p className="text-[13px] font-bold text-gray-900 font-headline truncate">
+                        Module {modIdx + 1}: {mod.title}
+                      </p>
+                      <p className="text-[11px] text-gray-400 mt-0.5">
+                        {completedCount} / {materials.length} | {materials.length} lesson{materials.length !== 1 ? 's' : ''}
+                      </p>
+                    </div>
+                    <span className={`material-symbols-outlined text-gray-400 text-lg flex-shrink-0 transition-transform duration-200 ${isExpanded ? '' : '-rotate-90'}`}>
+                      expand_more
+                    </span>
+                  </button>
+
+                  {isExpanded && (
+                    <div>
+                      {materials.map((mat, matIdx) => {
+                        const active = isEnrolled && activeMaterial?.id === mat.id;
+
+                        if (!isEnrolled) {
+                          return (
+                            <div
+                              key={matIdx}
+                              className="h-14 flex items-center gap-3 px-4 border-b border-gray-100 opacity-50 cursor-not-allowed flex-shrink-0"
+                            >
+                              <span className="material-symbols-outlined text-[16px] text-gray-400 flex-shrink-0">lock</span>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-[13px] text-gray-600 truncate">{matIdx + 1}. {mat.title}</p>
+                                <div className="flex items-center gap-1 mt-0.5 text-gray-400">
+                                  <MaterialIcon type={mat.type} />
+                                  <span className="text-[11px]">{mat.type}</span>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        }
+
+                        return (
+                          <button
+                            key={mat.id}
+                            onClick={() => handleSelectMaterial(mod, mat)}
+                            className={`w-full h-14 flex items-center gap-3 px-4 text-left border-b border-gray-100 transition-colors flex-shrink-0 ${
+                              active ? 'bg-gray-100' : 'hover:bg-gray-50'
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={false}
+                              readOnly
+                              className="flex-shrink-0 w-4 h-4 rounded border-gray-300 text-primary accent-primary cursor-pointer"
+                              onClick={(e) => e.stopPropagation()}
+                            />
+                            <div className="flex-1 min-w-0">
+                              <p className={`text-[13px] truncate ${active ? 'font-semibold text-gray-900' : 'text-gray-700'}`}>
+                                {matIdx + 1}. {mat.title}
+                              </p>
+                              <div className="flex items-center gap-1.5 mt-0.5">
+                                <span className={active ? 'text-primary' : 'text-gray-400'}>
+                                  <MaterialIcon type={mat.type} />
+                                </span>
+                                <span className="text-[11px] text-gray-400">{mat.type}</span>
+                              </div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            {modules.length === 0 && (
+              <div className="p-8 text-center text-gray-400 text-sm">
+                {isEnrolled ? 'No modules available.' : 'Purchase to view course contents.'}
+              </div>
+            )}
+          </div>
+        </aside>
+
+        {/* ── Floating open sidebar tab (visible when sidebar is closed, on right edge) ── */}
+        {!sidebarOpen && (
+          <button
+            onClick={() => setSidebarOpen(true)}
+            className="absolute right-0 top-0 z-20 flex items-center gap-1 bg-primary text-white pl-3 pr-2 py-2 rounded-bl-lg shadow-md hover:bg-primary/90 transition-colors text-xs font-bold"
+          >
+            <span className="material-symbols-outlined text-[16px]">chevron_left</span>
+            Course content
+          </button>
+        )}
+      </div>
     </div>
   );
 };
