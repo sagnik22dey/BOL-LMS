@@ -71,6 +71,7 @@ const DashboardLayout = () => {
     menuItems.push({ text: 'Organizations', path: '/dashboard/organizations' });
     menuItems.push({ text: 'All Users', path: '/dashboard/users' });
   } else if (user?.role === 'admin') {
+    menuItems.push({ text: 'My Organization', path: '/dashboard/my-organization' });
     menuItems.push({ text: 'Courses', path: '/dashboard/courses' });
     menuItems.push({ text: 'Users', path: '/dashboard/users' });
     menuItems.push({ text: 'Course Bundles', path: '/dashboard/course-bundles' });

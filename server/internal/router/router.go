@@ -91,6 +91,7 @@ func Setup() *gin.Engine {
 		superAdmin.POST("/admins", handlers.CreateAdmin)
 		superAdmin.GET("/users", handlers.GetSuperAdminsUsers)
 		superAdmin.GET("/users/unassigned", handlers.GetUnassignedUsers)
+		superAdmin.GET("/users/eligible", handlers.GetEligibleUsers)
 		superAdmin.DELETE("/users/:id", handlers.DeleteUser)
 		superAdmin.PATCH("/users/:id/suspend", handlers.SuspendUser)
 	}
@@ -100,6 +101,8 @@ func Setup() *gin.Engine {
 	{
 		admin.POST("/users", handlers.CreateOrganizationUser)
 		admin.GET("/users", handlers.GetOrganizationUsers)
+		admin.GET("/users/eligible", handlers.GetAdminEligibleUsers)
+		admin.POST("/organizations/assign-users", handlers.AdminBulkAssignUsersToOrg)
 
 		// Course Bundle management
 		admin.POST("/course-bundles", handlers.CreateCourseBundle)

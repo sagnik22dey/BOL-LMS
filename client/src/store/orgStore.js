@@ -4,6 +4,10 @@ import api from '../api/axios';
 export const useOrgStore = create((set, get) => ({
   orgs: [],
   unassignedUsers: [],
+  eligibleUsers: [],
+  myOrg: null,
+  adminOrgUsers: [],
+  adminEligibleUsers: [],
   loading: false,
   error: null,
 
@@ -58,9 +62,9 @@ export const useOrgStore = create((set, get) => ({
     set({ loading: true, error: null });
     try {
       await api.post(`/api/admin/super/organizations/${orgId}/assign-user`, { user_id: userId, role });
-      set({ 
+      set({
         unassignedUsers: get().unassignedUsers.filter(u => u.id !== userId),
-        loading: false 
+        loading: false
       });
       return true;
     } catch (error) {
@@ -69,14 +73,72 @@ export const useOrgStore = create((set, get) => ({
     }
   },
 
+  fetchEligibleUsers: async (search = '', role = 'user') => {
+    try {
+      const params = new URLSearchParams({ role, search });
+      const res = await api.get(`/api/admin/super/users/eligible?${params}`);
+      set({ eligibleUsers: res.data || [] });
+    } catch (err) {
+      set({ eligibleUsers: [] });
+    }
+  },
+
+  bulkAssignUsersToOrg: async (orgId, userIds, role) => {
+    const res = await api.post(`/api/admin/super/organizations/${orgId}/assign-user`, {
+      user_ids: userIds,
+      role,
+    });
+    // After successful assignment, remove assigned users from eligibleUsers
+    const assigned = res.data.assigned || [];
+    set((state) => ({
+      eligibleUsers: state.eligibleUsers.filter((u) => !assigned.includes(u.id)),
+    }));
+    return res.data;
+  },
+
   fetchMyOrg: async () => {
     set({ loading: true, error: null });
     try {
       const response = await api.get('/api/auth/organizations/my');
+      set({ myOrg: response.data, loading: false });
       return response.data;
     } catch (error) {
       set({ error: error.response?.data?.error || 'Failed to fetch organization', loading: false });
       return null;
     }
+  },
+
+  fetchAdminOrgUsers: async () => {
+    try {
+      const res = await api.get('/api/admin/users');
+      set({ adminOrgUsers: res.data || [] });
+    } catch (err) {
+      set({ adminOrgUsers: [] });
+    }
+  },
+
+  fetchAdminEligibleUsers: async (search = '') => {
+    try {
+      const params = new URLSearchParams({ search });
+      const res = await api.get(`/api/admin/users/eligible?${params}`);
+      set({ adminEligibleUsers: res.data || [] });
+    } catch (err) {
+      set({ adminEligibleUsers: [] });
+    }
+  },
+
+  adminBulkAssignUsers: async (userIds) => {
+    const res = await api.post('/api/admin/organizations/assign-users', {
+      user_ids: userIds,
+    });
+    const assigned = res.data.assigned || [];
+    set((state) => ({
+      adminEligibleUsers: state.adminEligibleUsers.filter((u) => !assigned.includes(u.id)),
+      adminOrgUsers: [
+        ...state.adminOrgUsers,
+        ...state.adminEligibleUsers.filter((u) => assigned.includes(u.id)),
+      ],
+    }));
+    return res.data;
   },
 }));

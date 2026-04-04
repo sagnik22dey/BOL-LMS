@@ -220,6 +220,12 @@ func migrate() {
 
 	// Safely add new columns to existing deployments
 	alterSchema := `
+	CREATE TABLE IF NOT EXISTS user_organizations (
+		user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+		organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
+		PRIMARY KEY (user_id, organization_id)
+	);
+
 	ALTER TABLE courses ADD COLUMN IF NOT EXISTS is_public BOOLEAN NOT NULL DEFAULT FALSE;
 	ALTER TABLE courses ADD COLUMN IF NOT EXISTS price INTEGER NOT NULL DEFAULT 0;
 	ALTER TABLE courses ADD COLUMN IF NOT EXISTS currency TEXT NOT NULL DEFAULT 'INR';

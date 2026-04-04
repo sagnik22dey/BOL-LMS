@@ -142,47 +142,83 @@ func AssignUserToOrg(c *gin.Context) {
 		return
 	}
 
-	userID, err := uuid.Parse(req.UserID)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user id"})
+	if len(req.UserIDs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no users provided"})
 		return
 	}
 
-	if req.Role != models.RoleAdmin && req.Role != models.RoleUser {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid role"})
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	if req.Role == models.RoleAdmin {
-		_, err = db.Pool.Exec(ctx,
-			`INSERT INTO organization_admins (organization_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-			orgID, userID)
+	var assigned []string
+	var skipped []string
+
+	for _, uid := range req.UserIDs {
+		userID, err := uuid.Parse(uid)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "could not assign admin to organization"})
-			return
+			skipped = append(skipped, uid)
+			continue
 		}
-	} else {
-		_, err = db.Pool.Exec(ctx,
-			`DELETE FROM organization_admins WHERE organization_id=$1 AND user_id=$2`, orgID, userID)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "could not update organization admins list"})
-			return
+
+		if req.Role == models.RoleAdmin {
+			// Enforce: admin can only be in one organization
+			var existingOrgID *uuid.UUID
+			err = db.Pool.QueryRow(ctx, `SELECT organization_id FROM users WHERE id=$1`, userID).Scan(&existingOrgID)
+			if err != nil {
+				skipped = append(skipped, uid)
+				continue
+			}
+			if existingOrgID != nil {
+				// Admin already in an org — skip
+				skipped = append(skipped, uid)
+				continue
+			}
+			// Insert into organization_admins
+			_, err = db.Pool.Exec(ctx,
+				`INSERT INTO organization_admins (organization_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+				orgID, userID)
+			if err != nil {
+				skipped = append(skipped, uid)
+				continue
+			}
+			// Update user role and set organization_id
+			_, err = db.Pool.Exec(ctx,
+				`UPDATE users SET role=$1, organization_id=$2, updated_at=$3 WHERE id=$4`,
+				models.RoleAdmin, orgID, time.Now(), userID)
+			if err != nil {
+				skipped = append(skipped, uid)
+				continue
+			}
+		} else {
+			// Regular user: allow multiple orgs via user_organizations table
+			// Remove from organization_admins if present
+			_, _ = db.Pool.Exec(ctx,
+				`DELETE FROM organization_admins WHERE organization_id=$1 AND user_id=$2`, orgID, userID)
+			// Insert into user_organizations join table
+			_, err = db.Pool.Exec(ctx,
+				`INSERT INTO user_organizations (user_id, organization_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+				userID, orgID)
+			if err != nil {
+				skipped = append(skipped, uid)
+				continue
+			}
+			// Update user role to "user", but do NOT overwrite organization_id (keep it for admin tracking)
+			_, err = db.Pool.Exec(ctx,
+				`UPDATE users SET role=$1, updated_at=$2 WHERE id=$3 AND role != 'admin' AND role != 'super_admin'`,
+				models.RoleUser, time.Now(), userID)
+			if err != nil {
+				skipped = append(skipped, uid)
+				continue
+			}
 		}
+		assigned = append(assigned, uid)
 	}
 
-	_, err = db.Pool.Exec(ctx,
-		`UPDATE users SET role=$1, organization_id=$2, updated_at=$3 WHERE id=$4`,
-		req.Role, orgID, time.Now(), userID,
-	)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not update user role and org"})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"message": "user assigned successfully"})
+	c.JSON(http.StatusOK, gin.H{
+		"message":  "Assignment complete",
+		"assigned": assigned,
+		"skipped":  skipped,
+	})
 }
 
 func GetMyOrganization(c *gin.Context) {
@@ -210,4 +246,68 @@ func GetMyOrganization(c *gin.Context) {
 	}
 	org.AdminIDs = loadOrgAdminIDs(ctx, org.ID)
 	c.JSON(http.StatusOK, org)
+}
+
+// AdminBulkAssignUsersToOrg allows an admin to add multiple existing users to their own organization.
+// Only allows assigning role='user' accounts (admin-to-admin assignment is super_admin only).
+func AdminBulkAssignUsersToOrg(c *gin.Context) {
+	orgIDStr := c.GetString("org_id")
+	if orgIDStr == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "Not associated with an organization"})
+		return
+	}
+	orgID, err := uuid.Parse(orgIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid organization ID"})
+		return
+	}
+
+	var req models.AssignUserRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		return
+	}
+	if len(req.UserIDs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No users provided"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var assigned []string
+	var skipped []string
+
+	for _, uid := range req.UserIDs {
+		userID, err := uuid.Parse(uid)
+		if err != nil {
+			skipped = append(skipped, uid)
+			continue
+		}
+
+		// Verify user exists and has role='user' (not admin or super_admin)
+		var userRole string
+		err = db.Pool.QueryRow(ctx, `SELECT role FROM users WHERE id=$1`, userID).Scan(&userRole)
+		if err != nil || userRole != string(models.RoleUser) {
+			skipped = append(skipped, uid)
+			continue
+		}
+
+		// Insert into user_organizations (multi-org join table)
+		_, err = db.Pool.Exec(ctx,
+			`INSERT INTO user_organizations (user_id, organization_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+			userID, orgID,
+		)
+		if err != nil {
+			skipped = append(skipped, uid)
+			continue
+		}
+		assigned = append(assigned, uid)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":  "Assignment complete",
+		"assigned": assigned,
+		"skipped":  skipped,
+	})
 }

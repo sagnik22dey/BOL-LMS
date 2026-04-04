@@ -14,7 +14,7 @@ import Login from './pages/Login';
 import Register from './pages/Register';
 import DashboardHome from './pages/DashboardHome';
 
-import { Organizations, Courses, CourseBuilder, Users, CourseBundles, Analytics, AssessmentStatus } from './pages/admin';
+import { MyOrganization, Organizations, Courses, CourseBuilder, Users, CourseBundles, Analytics, AssessmentStatus } from './pages/admin';
 import { MyLearning, CourseView, Cart } from './pages/learning';
 
 import { useEffect } from 'react';
@@ -76,6 +76,7 @@ function App() {
 
               {/* Admin Routes */}
               <Route element={<ProtectedRoute allowedRoles={['admin']} />}>
+                <Route path="/dashboard/my-organization" element={<MyOrganization />} />
                 <Route path="/dashboard/courses/builder/:courseId?" element={<CourseBuilder />} />
                 <Route path="/dashboard/courses/:courseId/assessments" element={<AssessmentStatus />} />
                 <Route path="/dashboard/course-bundles" element={<CourseBundles />} />

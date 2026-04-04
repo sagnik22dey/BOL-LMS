@@ -1,3 +1,4 @@
+export { default as MyOrganization } from './MyOrganization';
 export { default as Organizations } from './Organizations';
 export { default as Courses } from './Courses';
 export { default as CourseBuilder } from './CourseBuilder';

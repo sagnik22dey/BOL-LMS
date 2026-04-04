@@ -21,20 +21,30 @@ const Modal = ({ open, onClose, children, title }) => {
 };
 
 const Organizations = () => {
-  const { orgs, unassignedUsers, fetchOrgs, fetchUnassignedUsers, createOrg, updateOrg, assignUserToOrg, loading, error } = useOrgStore();
+  const { orgs, fetchOrgs, createOrg, updateOrg, eligibleUsers, fetchEligibleUsers, bulkAssignUsersToOrg, loading, error } = useOrgStore();
   const [open, setOpen] = useState(false);
   const [formData, setFormData] = useState({ name: '', slug: '' });
   const [formError, setFormError] = useState('');
 
   const [editOrgId, setEditOrgId] = useState(null);
-  const [assignData, setAssignData] = useState({ user_id: '', role: 'user' });
+  const [selectedUserIds, setSelectedUserIds] = useState([]);
+  const [assignRole, setAssignRole] = useState('user');
+  const [userSearch, setUserSearch] = useState('');
   const [assignError, setAssignError] = useState('');
   const [assignSuccess, setAssignSuccess] = useState('');
 
   useEffect(() => {
     fetchOrgs();
-    fetchUnassignedUsers();
-  }, [fetchOrgs, fetchUnassignedUsers]);
+  }, [fetchOrgs]);
+
+  // Debounced search for eligible users
+  useEffect(() => {
+    if (!editOrgId) return;
+    const timer = setTimeout(() => {
+      fetchEligibleUsers(userSearch, assignRole);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [userSearch, assignRole, editOrgId]);
 
   const handleOpen = () => {
     setEditOrgId(null);
@@ -42,6 +52,9 @@ const Organizations = () => {
     setFormError('');
     setAssignError('');
     setAssignSuccess('');
+    setSelectedUserIds([]);
+    setAssignRole('user');
+    setUserSearch('');
     setOpen(true);
   };
 
@@ -51,6 +64,9 @@ const Organizations = () => {
     setFormError('');
     setAssignError('');
     setAssignSuccess('');
+    setSelectedUserIds([]);
+    setAssignRole('user');
+    setUserSearch('');
     setOpen(true);
   };
 
@@ -58,6 +74,11 @@ const Organizations = () => {
     setOpen(false);
     setFormData({ name: '', slug: '' });
     setFormError('');
+    setSelectedUserIds([]);
+    setAssignRole('user');
+    setUserSearch('');
+    setAssignError('');
+    setAssignSuccess('');
   };
 
   const handleChange = (e) => {
@@ -78,16 +99,38 @@ const Organizations = () => {
     if (success) { handleClose(); } else { setFormError(useOrgStore.getState().error || `Failed to ${editOrgId ? 'update' : 'create'} organization`); }
   };
 
-  const handleAssignSubmit = async () => {
+  const handleToggleUser = (userId) => {
+    setSelectedUserIds((prev) =>
+      prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId]
+    );
+  };
+
+  const handleSelectAll = () => {
+    if (selectedUserIds.length === eligibleUsers.length) {
+      setSelectedUserIds([]);
+    } else {
+      setSelectedUserIds(eligibleUsers.map((u) => u.id));
+    }
+  };
+
+  const handleBulkAssign = async () => {
     setAssignError('');
     setAssignSuccess('');
-    if (!assignData.user_id) { setAssignError('Please select a user'); return; }
-    const success = await assignUserToOrg(editOrgId, assignData.user_id, assignData.role);
-    if (success) {
-      setAssignSuccess('User assigned successfully');
-      setAssignData({ user_id: '', role: 'user' });
-    } else {
-      setAssignError(useOrgStore.getState().error || 'Failed to assign user');
+    if (selectedUserIds.length === 0) {
+      setAssignError('Please select at least one user.');
+      return;
+    }
+    try {
+      const result = await bulkAssignUsersToOrg(editOrgId, selectedUserIds, assignRole);
+      const assignedCount = result.assigned?.length || 0;
+      const skippedCount = result.skipped?.length || 0;
+      setAssignSuccess(
+        `Successfully assigned ${assignedCount} user(s).${skippedCount > 0 ? ` ${skippedCount} skipped (already in an organization or invalid).` : ''}`
+      );
+      setSelectedUserIds([]);
+      fetchOrgs(); // refresh org list
+    } catch (err) {
+      setAssignError(err?.response?.data?.error || 'Failed to assign users.');
     }
   };
 
@@ -214,33 +257,124 @@ const Organizations = () => {
 
         {editOrgId && (
           <div className="mt-6 pt-6 border-t border-[var(--outline)]">
-            <h4 className="font-bold text-[var(--text-primary)] mb-4">Assign User to Organization</h4>
-            {assignError && <div className="mb-3 px-4 py-3 rounded-xl bg-[#fdecea] border border-[#f5c6c6] text-[#ba1a1a] text-sm">{assignError}</div>}
-            {assignSuccess && <div className="mb-3 px-4 py-3 rounded-xl bg-[#e6f4ea] border border-[#b7dfbe] text-[#1e7e34] text-sm">{assignSuccess}</div>}
-            <div className="flex flex-col gap-4">
-              <div className="flex flex-col gap-1.5">
-                <label className="text-sm font-semibold text-[var(--text-primary)]">Select User</label>
-                <select className={inputClass} value={assignData.user_id} onChange={(e) => setAssignData({ ...assignData, user_id: e.target.value })}>
-                  <option value="">Select unassigned user…</option>
-                  {unassignedUsers.map((u) => <option key={u.id} value={u.id}>{u.name} ({u.email})</option>)}
-                  {unassignedUsers.length === 0 && <option disabled>No unassigned users</option>}
-                </select>
+            <h4 className="text-base font-semibold text-[var(--text-primary)] mb-4">
+              Assign Users to Organization
+            </h4>
+
+            {assignError && (
+              <div className="mb-3 p-3 rounded-lg bg-red-50 text-red-700 text-sm border border-red-200">
+                {assignError}
               </div>
-              <div className="flex flex-col gap-1.5">
-                <label className="text-sm font-semibold text-[var(--text-primary)]">Role</label>
-                <select className={inputClass} value={assignData.role} onChange={(e) => setAssignData({ ...assignData, role: e.target.value })}>
-                  <option value="user">User</option>
-                  <option value="admin">Admin</option>
-                </select>
+            )}
+            {assignSuccess && (
+              <div className="mb-3 p-3 rounded-lg bg-green-50 text-green-700 text-sm border border-green-200">
+                {assignSuccess}
               </div>
-              <button
-                onClick={handleAssignSubmit}
-                disabled={loading || !assignData.user_id}
-                className="w-full py-2.5 rounded-xl text-sm font-bold bg-[var(--primary)] text-white hover:bg-[var(--primary-dark)] transition-colors disabled:opacity-50"
+            )}
+
+            {/* Role Selector */}
+            <div className="mb-3">
+              <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1">
+                Role
+              </label>
+              <select
+                value={assignRole}
+                onChange={(e) => {
+                  setAssignRole(e.target.value);
+                  setSelectedUserIds([]);
+                  setUserSearch('');
+                }}
+                className="w-full p-2.5 rounded-xl border border-[var(--outline)] bg-[var(--surface)] text-[var(--text-primary)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)]"
               >
-                Assign to Organization
-              </button>
+                <option value="user">User</option>
+                <option value="admin">Admin</option>
+              </select>
+              {assignRole === 'admin' && (
+                <p className="mt-1.5 text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                  ⚠️ Admins can only belong to one organization. Only users without an existing organization will be shown.
+                </p>
+              )}
             </div>
+
+            {/* Search Bar */}
+            <div className="mb-3">
+              <label className="block text-sm font-medium text-[var(--text-secondary)] mb-1">
+                Search Users
+              </label>
+              <input
+                type="text"
+                value={userSearch}
+                onChange={(e) => setUserSearch(e.target.value)}
+                placeholder="Search by name or email..."
+                className="w-full p-2.5 rounded-xl border border-[var(--outline)] bg-[var(--surface)] text-[var(--text-primary)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)]"
+              />
+            </div>
+
+            {/* User List with Checkboxes */}
+            <div className="mb-3">
+              <div className="flex items-center justify-between mb-2">
+                <label className="block text-sm font-medium text-[var(--text-secondary)]">
+                  Select Users
+                </label>
+                {eligibleUsers.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleSelectAll}
+                    className="text-xs text-[var(--primary)] hover:underline"
+                  >
+                    {selectedUserIds.length === eligibleUsers.length ? 'Deselect All' : 'Select All'}
+                  </button>
+                )}
+              </div>
+              <div className="border border-[var(--outline)] rounded-xl overflow-hidden">
+                {eligibleUsers.length === 0 ? (
+                  <p className="text-sm text-[var(--text-secondary)] text-center py-6 px-4">
+                    {userSearch ? 'No users match your search.' : 'No eligible users found.'}
+                  </p>
+                ) : (
+                  <div className="max-h-48 overflow-y-auto divide-y divide-[var(--outline)]">
+                    {eligibleUsers.map((user) => (
+                      <label
+                        key={user.id}
+                        className="flex items-center gap-3 px-3 py-2.5 cursor-pointer hover:bg-[var(--surface-hover,#f5f5f5)] transition-colors"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedUserIds.includes(user.id)}
+                          onChange={() => handleToggleUser(user.id)}
+                          className="w-4 h-4 rounded border-[var(--outline)] text-[var(--primary)] focus:ring-[var(--primary)]"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-[var(--text-primary)] truncate">
+                            {user.name}
+                          </p>
+                          <p className="text-xs text-[var(--text-secondary)] truncate">{user.email}</p>
+                        </div>
+                        {user.organization_id && (
+                          <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full shrink-0">
+                            In org
+                          </span>
+                        )}
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {selectedUserIds.length > 0 && (
+                <p className="mt-1.5 text-xs text-[var(--text-secondary)]">
+                  {selectedUserIds.length} user(s) selected
+                </p>
+              )}
+            </div>
+
+            {/* Assign Button */}
+            <button
+              onClick={handleBulkAssign}
+              disabled={selectedUserIds.length === 0}
+              className="w-full py-2.5 rounded-xl bg-[var(--primary)] text-white text-sm font-semibold hover:opacity-90 transition disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Assign {selectedUserIds.length > 0 ? `(${selectedUserIds.length})` : ''} to Organization
+            </button>
           </div>
         )}
       </Modal>

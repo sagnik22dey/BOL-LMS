@@ -26,6 +26,6 @@ type UpdateOrgRequest struct {
 }
 
 type AssignUserRequest struct {
-	UserID string `json:"user_id" binding:"required"`
-	Role   Role   `json:"role" binding:"required"`
+	UserIDs []string `json:"user_ids"`
+	Role    Role     `json:"role"`
 }
