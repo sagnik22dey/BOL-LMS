@@ -1,6 +1,7 @@
 package router
 
 import (
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -19,12 +20,16 @@ import (
 // Always includes localhost variants for development.
 // Add any extra origins via the ALLOWED_ORIGINS env var as a comma-separated list,
 // e.g. ALLOWED_ORIGINS=https://app.yourdomain.com,https://www.yourdomain.com
+// Use ALLOWED_ORIGINS=* to allow all origins (disables credentials).
 func allowedOrigins() []string {
 	base := []string{
+		// Local development
 		"http://localhost:5173",
 		"http://localhost:3000",
 		"http://localhost:80",
 		"http://localhost",
+		// Railway production frontend
+		"https://bol-lms-copy-frontend.up.railway.app",
 	}
 	if extra := os.Getenv("ALLOWED_ORIGINS"); extra != "" {
 		for _, o := range strings.Split(extra, ",") {
@@ -34,20 +39,32 @@ func allowedOrigins() []string {
 			}
 		}
 	}
+	log.Printf("[CORS] allowedOrigins=%v", base)
 	return base
 }
 
 func Setup() *gin.Engine {
 	r := gin.Default()
 
-	r.Use(cors.New(cors.Config{
-		AllowOrigins:     allowedOrigins(),
+	corsConfig := cors.Config{
 		AllowMethods:     []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
 		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
 		ExposeHeaders:    []string{"Content-Length"},
 		AllowCredentials: true,
 		MaxAge:           12 * time.Hour,
-	}))
+	}
+
+	// If ALLOWED_ORIGINS=* allow all origins (credentials must be disabled per CORS spec).
+	// Otherwise use the explicit origin list with credentials enabled.
+	if raw := os.Getenv("ALLOWED_ORIGINS"); raw == "*" {
+		log.Println("[CORS] AllowAllOrigins=true, AllowCredentials=false")
+		corsConfig.AllowAllOrigins = true
+		corsConfig.AllowCredentials = false
+	} else {
+		corsConfig.AllowOrigins = allowedOrigins()
+	}
+
+	r.Use(cors.New(corsConfig))
 
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
@@ -143,7 +160,7 @@ func Setup() *gin.Engine {
 	{
 		studentCourses.GET("/presign-get", handlers.GeneratePresignGetURL)
 		studentCourses.POST("/enroll", handlers.EnrollUser)
-	studentCourses.GET("/my-courses", handlers.ListMyEnrollments)
+		studentCourses.GET("/my-courses", handlers.ListMyEnrollments)
 	}
 
 	payments := api.Group("/payments")

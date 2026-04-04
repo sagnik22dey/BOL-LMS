@@ -40,6 +40,11 @@ func GenerateToken(user models.User) (string, error) {
 
 func AuthRequired() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// Allow CORS preflight requests to pass through without authentication.
+		if c.Request.Method == http.MethodOptions {
+			c.Next()
+			return
+		}
 		header := c.GetHeader("Authorization")
 		if !strings.HasPrefix(header, "Bearer ") {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing or invalid token"})
@@ -64,6 +69,11 @@ func AuthRequired() gin.HandlerFunc {
 
 func RequireRole(roles ...models.Role) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// Allow CORS preflight requests to pass through without role enforcement.
+		if c.Request.Method == http.MethodOptions {
+			c.Next()
+			return
+		}
 		current := models.Role(c.GetString("role"))
 		for _, r := range roles {
 			if current == r {
