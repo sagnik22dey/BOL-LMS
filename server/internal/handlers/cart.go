@@ -43,18 +43,22 @@ func GetCart(c *gin.Context) {
 
 	cart := models.Cart{ID: cartID, UserID: userID, Items: []models.CartItem{}}
 
-	rows, err := db.Pool.Query(ctx, `SELECT id, item_type, item_id, added_at FROM cart_items WHERE cart_id=$1`, cartID)
+	// PERF-001: Replace N+1 per-item queries with a single JOIN across courses and bundles.
+	rows, err := db.Pool.Query(ctx, `
+		SELECT ci.id, ci.item_type, ci.item_id, ci.added_at,
+		       COALESCE(c.title, cb.name, '') AS title,
+		       COALESCE(c.price, cb.price, 0) AS price,
+		       COALESCE(c.currency, cb.currency, 'INR') AS currency
+		FROM cart_items ci
+		LEFT JOIN courses c ON ci.item_type = 'course' AND ci.item_id = c.id
+		LEFT JOIN course_bundles cb ON ci.item_type = 'bundle' AND ci.item_id = cb.id
+		WHERE ci.cart_id = $1`, cartID)
 	if err == nil {
 		defer rows.Close()
 		for rows.Next() {
 			var ci models.CartItem
 			ci.CartID = cartID
-			if err := rows.Scan(&ci.ID, &ci.ItemType, &ci.ItemID, &ci.AddedAt); err == nil {
-				if ci.ItemType == "course" {
-					db.Pool.QueryRow(ctx, `SELECT title, price, currency FROM courses WHERE id=$1`, ci.ItemID).Scan(&ci.Title, &ci.Price, &ci.Currency)
-				} else if ci.ItemType == "bundle" {
-					db.Pool.QueryRow(ctx, `SELECT name, price, currency FROM course_bundles WHERE id=$1`, ci.ItemID).Scan(&ci.Title, &ci.Price, &ci.Currency)
-				}
+			if err := rows.Scan(&ci.ID, &ci.ItemType, &ci.ItemID, &ci.AddedAt, &ci.Title, &ci.Price, &ci.Currency); err == nil {
 				cart.Items = append(cart.Items, ci)
 			}
 		}
@@ -75,6 +79,13 @@ func AddToCart(c *gin.Context) {
 		return
 	}
 
+	// SEC-005: Validate that item_type is one of the known valid types.
+	// Prevents arbitrary strings being stored in the database.
+	if req.ItemType != "course" && req.ItemType != "bundle" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid item type: must be 'course' or 'bundle'"})
+		return
+	}
+
 	itemID, err := uuid.Parse(req.ItemID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid item id"})
@@ -90,7 +101,7 @@ func AddToCart(c *gin.Context) {
 		return
 	}
 
-	_, err = db.Pool.Exec(ctx, 
+	_, err = db.Pool.Exec(ctx,
 		`INSERT INTO cart_items (id, cart_id, item_type, item_id) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`,
 		uuid.New(), cartID, req.ItemType, itemID,
 	)
@@ -108,13 +119,13 @@ func RemoveFromCart(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user id"})
 		return
 	}
-	
+
 	itemID, err := uuid.Parse(c.Param("itemId"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid item id"})
 		return
 	}
-	
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -149,6 +160,10 @@ func ClearCart(c *gin.Context) {
 		return
 	}
 
-	db.Pool.Exec(ctx, `DELETE FROM cart_items WHERE cart_id=$1`, cartID)
+	// QUAL-001: Handle the DB error instead of silently ignoring it.
+	if _, err := db.Pool.Exec(ctx, `DELETE FROM cart_items WHERE cart_id=$1`, cartID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not clear cart"})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"message": "cart cleared"})
 }

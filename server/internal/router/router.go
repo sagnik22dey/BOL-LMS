@@ -136,7 +136,6 @@ func Setup() *gin.Engine {
 		// Shared routes for any authenticated user (scoping handled in handler)
 		courses.GET("", handlers.ListCourses)
 		courses.GET("/:id", handlers.GetCourse)
-		courses.POST("/presign", handlers.GeneratePresignURL)
 
 		// Admin-only routes
 		adminCourses := courses.Group("")
@@ -151,6 +150,8 @@ func Setup() *gin.Engine {
 			adminCourses.GET("/:id/modules/:moduleId/assessments", handlers.GetModuleAssessments)
 			adminCourses.PATCH("/:id/modules/:moduleId/quizzes/:quizId/retake/:userId", handlers.UnlockQuizRetake)
 			adminCourses.PATCH("/:id/modules/:moduleId/assignments/:assignmentId/reset/:userId", handlers.ResetAssignment)
+			// SEC-003: presign for file uploads is admin-only
+			adminCourses.POST("/presign", handlers.GeneratePresignURL)
 		}
 
 		// Comment routes
@@ -205,8 +206,8 @@ func Setup() *gin.Engine {
 		dashboard.GET("/stats", handlers.GetDashboardStats)
 	}
 
-	// WebSocket endpoint
-	r.GET("/ws/comments/:moduleId", func(c *gin.Context) {
+	// WebSocket endpoint — SEC-002: require authentication before upgrading the connection
+	r.GET("/ws/comments/:moduleId", middleware.AuthRequired(), func(c *gin.Context) {
 		ws.ServeWs(ws.GlobalHub, c)
 	})
 

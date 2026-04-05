@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"time"
 
@@ -93,7 +94,7 @@ func CreateCourse(c *gin.Context) {
 func ListCourses(c *gin.Context) {
 	orgIDStr := c.GetString("org_id")
 	role := c.GetString("role")
-	
+
 	var orgID uuid.UUID
 	if orgIDStr != "" {
 		var err error
@@ -206,13 +207,31 @@ func GeneratePresignURL(c *gin.Context) {
 		return
 	}
 
+	// SEC-003: Validate that the requested bucket is one of the known allowed buckets.
+	// This prevents admins from generating presigned URLs for arbitrary bucket paths.
+	allowedBuckets := map[string]bool{
+		config.App.MinioBucketVids: true,
+		config.App.MinioBucketDocs: true,
+	}
+	if !allowedBuckets[req.Bucket] {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid bucket: must be one of the configured storage buckets"})
+		return
+	}
+
 	expiry := time.Duration(req.ExpiryMins) * time.Minute
 	if expiry == 0 {
 		expiry = 15 * time.Minute
 	}
+	// Cap expiry to 60 minutes to limit presigned URL lifetime
+	if expiry > 60*time.Minute {
+		expiry = 60 * time.Minute
+	}
+
+	log.Printf("[presign] bucket=%q object=%q expiry=%v", req.Bucket, req.ObjectName, expiry)
 
 	putURL, err := storage.PresignedPutURL(req.Bucket, req.ObjectName, expiry)
 	if err != nil {
+		log.Printf("[presign] PresignedPutURL error: %v", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not generate presigned URL"})
 		return
 	}
@@ -248,6 +267,27 @@ func UpdateCourse(c *gin.Context) {
 		return
 	}
 
+	// BL-001: Verify the course belongs to the calling admin's organization
+	// before making any changes, to prevent cross-org course modification.
+	callerOrgID, err := uuid.Parse(c.GetString("org_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid org context"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var ownerOrgID uuid.UUID
+	if err := db.Pool.QueryRow(ctx, `SELECT organization_id FROM courses WHERE id=$1`, id).Scan(&ownerOrgID); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "course not found"})
+		return
+	}
+	if ownerOrgID != callerOrgID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "access denied: course belongs to a different organization"})
+		return
+	}
+
 	var course models.Course
 	if err := c.ShouldBindJSON(&course); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -270,9 +310,6 @@ func UpdateCourse(c *gin.Context) {
 	course.UpdatedAt = time.Now()
 	modulesJSON, _ := json.Marshal(course.Modules)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
 	_, err = db.Pool.Exec(ctx,
 		`UPDATE courses SET title=$1, description=$2, thumbnail_key=$3, modules=$4, is_published=$5, is_public=$6, price=$7, currency=$8, validity_days=$9, instructor_name=$10, instructor_bio=$11, updated_at=$12
 		 WHERE id=$13`,
@@ -293,8 +330,26 @@ func DeleteCourse(c *gin.Context) {
 		return
 	}
 
+	// BL-001: Verify the course belongs to the calling admin's organization
+	// before deleting, to prevent cross-org course deletion.
+	callerOrgID, err := uuid.Parse(c.GetString("org_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid org context"})
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+
+	var ownerOrgID uuid.UUID
+	if err := db.Pool.QueryRow(ctx, `SELECT organization_id FROM courses WHERE id=$1`, id).Scan(&ownerOrgID); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "course not found"})
+		return
+	}
+	if ownerOrgID != callerOrgID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "access denied: course belongs to a different organization"})
+		return
+	}
 
 	if _, err := db.Pool.Exec(ctx, `DELETE FROM courses WHERE id = $1`, id); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not delete course"})

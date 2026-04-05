@@ -59,7 +59,12 @@ func SubmitAssignment(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid assignment id"})
 		return
 	}
-	userID, _ := uuid.Parse(c.GetString("user_id"))
+	// QUAL-003: Handle parse error explicitly.
+	userID, err := uuid.Parse(c.GetString("user_id"))
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid user context"})
+		return
+	}
 
 	var payload struct {
 		FilePath string `json:"file_path" binding:"required"`
@@ -159,8 +164,37 @@ func GetModuleAssessments(c *gin.Context) {
 		return
 	}
 
+	// BL-006: Verify the module's quiz/assignment belongs to the calling admin's org
+	// before returning any user submission data.
+	callerOrgID, err := uuid.Parse(c.GetString("org_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid org context"})
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+
+	// Check org ownership via the quizzes table (module must have at least a quiz or assignment in the org)
+	var assignmentOrgID uuid.UUID
+	ownershipErr := db.Pool.QueryRow(ctx,
+		`SELECT organization_id FROM assignments WHERE module_id=$1 LIMIT 1`, moduleID).Scan(&assignmentOrgID)
+
+	if ownershipErr != nil {
+		// Try via quizzes table if no assignment found
+		var quizOrgID uuid.UUID
+		if qErr := db.Pool.QueryRow(ctx,
+			`SELECT organization_id FROM quizzes WHERE module_id=$1 LIMIT 1`, moduleID).Scan(&quizOrgID); qErr != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "no assessments found for this module"})
+			return
+		} else if quizOrgID != callerOrgID {
+			c.JSON(http.StatusForbidden, gin.H{"error": "access denied: module belongs to a different organization"})
+			return
+		}
+	} else if assignmentOrgID != callerOrgID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "access denied: module belongs to a different organization"})
+		return
+	}
 
 	quizzes := []models.Submission{}
 	qRows, _ := db.Pool.Query(ctx,
@@ -225,7 +259,12 @@ func GetMyAssignmentSubmission(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid assignment id"})
 		return
 	}
-	userID, _ := uuid.Parse(c.GetString("user_id"))
+	// QUAL-003: Handle parse error explicitly.
+	userID, err := uuid.Parse(c.GetString("user_id"))
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid user context"})
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

@@ -14,6 +14,10 @@ import (
 	"github.com/google/uuid"
 )
 
+// maxCommentLength is the maximum allowed number of characters in a comment.
+// QUAL-004: Prevents storage abuse and oversized WebSocket broadcasts.
+const maxCommentLength = 5000
+
 func ListComments(c *gin.Context) {
 	moduleID, err := uuid.Parse(c.Param("moduleId"))
 	if err != nil {
@@ -51,6 +55,7 @@ func CreateComment(c *gin.Context) {
 		return
 	}
 
+	// QUAL-003: Handle uuid.Parse error explicitly.
 	userID, err := uuid.Parse(c.GetString("user_id"))
 	if err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
@@ -66,6 +71,49 @@ func CreateComment(c *gin.Context) {
 		return
 	}
 
+	// QUAL-004: Enforce maximum comment length to prevent storage abuse.
+	if len(req.Text) > maxCommentLength {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "comment exceeds maximum allowed length of 5000 characters"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// BL-007: Verify the user is enrolled in a course that contains this module,
+	// or has a course assignment covering this module, before allowing them to comment.
+	var enrollmentCheck string
+	enrollErr := db.Pool.QueryRow(ctx, `
+		SELECT e.id FROM enrollments e
+		JOIN courses c ON e.course_id = c.id
+		JOIN (
+			SELECT (m->>'id')::uuid AS module_uuid, id AS course_id
+			FROM courses,
+			     jsonb_array_elements(modules) AS m
+		) AS cm ON cm.course_id = c.id AND cm.module_uuid = $2
+		WHERE e.user_id = $1
+		LIMIT 1`, userID, moduleID).Scan(&enrollmentCheck)
+
+	var assignmentCheck string
+	assignErr := db.Pool.QueryRow(ctx, `
+		SELECT uca.id FROM user_course_assignments uca
+		JOIN (
+			SELECT (m->>'id')::uuid AS module_uuid, id AS course_id
+			FROM courses,
+			     jsonb_array_elements(modules) AS m
+		) AS cm ON cm.course_id = uca.course_id AND cm.module_uuid = $2
+		WHERE uca.user_id = $1
+		LIMIT 1`, userID, moduleID).Scan(&assignmentCheck)
+
+	// Also allow admins (checked by role) to comment without enrollment
+	role := c.GetString("role")
+	isAdmin := role == string(models.RoleAdmin) || role == string(models.RoleSuperAdmin)
+
+	if enrollErr != nil && assignErr != nil && !isAdmin {
+		c.JSON(http.StatusForbidden, gin.H{"error": "you must be enrolled in the course to post comments"})
+		return
+	}
+
 	comment := models.Comment{
 		ID:        uuid.New(),
 		ModuleID:  moduleID,
@@ -74,9 +122,6 @@ func CreateComment(c *gin.Context) {
 		Text:      req.Text,
 		CreatedAt: time.Now(),
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
 
 	_, err = db.Pool.Exec(ctx,
 		`INSERT INTO comments (id, module_id, user_id, user_name, text, created_at)

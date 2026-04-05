@@ -28,12 +28,19 @@ func Load() {
 		log.Println("No .env file found, reading from environment")
 	}
 
-	expiry, _ := strconv.Atoi(getEnv("JWT_EXPIRY_HOURS", "72"))
+	// SEC-001: Refuse to start with a missing or default JWT secret.
+	// A predictable secret allows any attacker to forge valid tokens.
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if jwtSecret == "" {
+		log.Fatal("FATAL: JWT_SECRET environment variable must be set to a strong random value")
+	}
+
+	expiry, _ := strconv.Atoi(getEnv("JWT_EXPIRY_HOURS", "24"))
 	useSSL, _ := strconv.ParseBool(getEnv("MINIO_USE_SSL", "false"))
 
 	App = Config{
 		Port:            getEnv("PORT", "8080"),
-		JWTSecret:       getEnv("JWT_SECRET", "change_me"),
+		JWTSecret:       jwtSecret,
 		JWTExpiryHours:  expiry,
 		PostgresDSN:     getEnv("POSTGRES_DSN", ""),
 		MinioEndpoint:   getEnv("MINIO_ENDPOINT", "localhost:9000"),

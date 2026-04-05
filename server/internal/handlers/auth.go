@@ -94,6 +94,13 @@ func Login(c *gin.Context) {
 		return
 	}
 
+	// BL-008: Reject login attempts from suspended accounts immediately,
+	// before issuing a token, so suspension takes effect on next login.
+	if user.IsSuspended {
+		c.JSON(http.StatusForbidden, gin.H{"error": "account has been suspended"})
+		return
+	}
+
 	token, err := middleware.GenerateToken(user)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not generate token"})

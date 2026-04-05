@@ -22,9 +22,17 @@ type AssignmentDisplay struct {
 }
 
 func GetDashboardStats(c *gin.Context) {
-	orgID, _ := uuid.Parse(c.GetString("org_id"))
-	userID, _ := uuid.Parse(c.GetString("user_id"))
 	role := c.GetString("role")
+
+	// QUAL-003: Handle parse errors explicitly instead of silently using uuid.Nil.
+	userID, err := uuid.Parse(c.GetString("user_id"))
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid user context"})
+		return
+	}
+
+	// orgID may be empty for super_admin without an org — handle gracefully.
+	orgID, _ := uuid.Parse(c.GetString("org_id"))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -35,7 +43,12 @@ func GetDashboardStats(c *gin.Context) {
 		db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE organization_id=$1 AND role='user'`, orgID).Scan(&totalLearners)
 		db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM courses WHERE organization_id=$1`, orgID).Scan(&activeCourses)
 		db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM assignments WHERE organization_id=$1`, orgID).Scan(&totalAssignments)
-		db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM assignment_submissions`).Scan(&totalSubmissions)
+		// PERF-002 / QUAL-002: Scope totalSubmissions to this organization only,
+		// by joining through assignments so we only count submissions for this org's assignments.
+		db.Pool.QueryRow(ctx, `
+			SELECT COUNT(*) FROM assignment_submissions sub
+			JOIN assignments a ON sub.assignment_id = a.id
+			WHERE a.organization_id = $1`, orgID).Scan(&totalSubmissions)
 
 		completionRate := 0
 		if totalAssignments > 0 && totalLearners > 0 {

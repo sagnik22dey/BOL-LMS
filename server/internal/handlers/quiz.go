@@ -99,7 +99,12 @@ func StartQuiz(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid quiz id"})
 		return
 	}
-	userID, _ := uuid.Parse(c.GetString("user_id"))
+	// QUAL-003: Handle parse error explicitly.
+	userID, err := uuid.Parse(c.GetString("user_id"))
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid user context"})
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -157,7 +162,12 @@ func SubmitQuiz(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid quiz id"})
 		return
 	}
-	userID, _ := uuid.Parse(c.GetString("user_id"))
+	// QUAL-003: Handle parse error explicitly.
+	userID, err := uuid.Parse(c.GetString("user_id"))
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid user context"})
+		return
+	}
 
 	var payload struct {
 		Answers []models.SubmissionAnswer `json:"answers"`
@@ -261,8 +271,27 @@ func ListSubmissions(c *gin.Context) {
 		return
 	}
 
+	// BL-006: Verify the quiz belongs to the calling admin's organization
+	// before returning any submission data.
+	callerOrgID, err := uuid.Parse(c.GetString("org_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid org context"})
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+
+	var quizOrgID uuid.UUID
+	if err := db.Pool.QueryRow(ctx,
+		`SELECT organization_id FROM quizzes WHERE id=$1`, quizID).Scan(&quizOrgID); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "quiz not found"})
+		return
+	}
+	if quizOrgID != callerOrgID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "access denied: quiz belongs to a different organization"})
+		return
+	}
 
 	rows, err := db.Pool.Query(ctx,
 		`SELECT id, quiz_id, module_id, user_id, answers, score, max_score, is_graded, graded_by, started_at, submitted_at, retake_allowed
@@ -354,7 +383,12 @@ func GetMyQuizSubmission(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid quiz id"})
 		return
 	}
-	userID, _ := uuid.Parse(c.GetString("user_id"))
+	// QUAL-003: Handle parse error explicitly.
+	userID, err := uuid.Parse(c.GetString("user_id"))
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid user context"})
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

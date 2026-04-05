@@ -13,7 +13,12 @@ import (
 )
 
 func EnrollUser(c *gin.Context) {
-	userID, _ := uuid.Parse(c.GetString("user_id"))
+	// QUAL-003: Handle parse error explicitly rather than silently using uuid.Nil.
+	userID, err := uuid.Parse(c.GetString("user_id"))
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid user context"})
+		return
+	}
 
 	var req models.EnrollRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -37,10 +42,53 @@ func EnrollUser(c *gin.Context) {
 		return
 	}
 
-	var courseCheckID string
-	if err := db.Pool.QueryRow(ctx, `SELECT id FROM courses WHERE id=$1`, courseID).Scan(&courseCheckID); err != nil {
+	// BL-004: Fetch course details and enforce access rules before enrolling.
+	// Users must not be able to enroll in unpublished or foreign-org private courses.
+	var isPublished bool
+	var isPublic bool
+	var courseOrgID uuid.UUID
+	var coursePrice int
+	err = db.Pool.QueryRow(ctx,
+		`SELECT is_published, is_public, organization_id, price FROM courses WHERE id=$1`,
+		courseID).Scan(&isPublished, &isPublic, &courseOrgID, &coursePrice)
+	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "course not found"})
 		return
+	}
+
+	if !isPublished {
+		c.JSON(http.StatusForbidden, gin.H{"error": "course is not available for enrollment"})
+		return
+	}
+
+	// If the course is not public, the user must belong to the same org as the course.
+	if !isPublic {
+		callerOrgIDStr := c.GetString("org_id")
+		callerOrgID, parseErr := uuid.Parse(callerOrgIDStr)
+		if parseErr != nil || callerOrgID != courseOrgID {
+			c.JSON(http.StatusForbidden, gin.H{"error": "access denied: you are not in the course's organization"})
+			return
+		}
+	}
+
+	// If the course has a price, the user must have a paid assignment or bundle assignment.
+	if coursePrice > 0 {
+		var paidAssignmentID string
+		errAssign := db.Pool.QueryRow(ctx,
+			`SELECT id FROM user_course_assignments WHERE user_id=$1 AND course_id=$2`,
+			userID, courseID).Scan(&paidAssignmentID)
+
+		var bundleAssignmentID string
+		errBundle := db.Pool.QueryRow(ctx, `
+			SELECT cbu.bundle_id FROM course_bundle_users cbu
+			JOIN course_bundle_courses cbc ON cbu.bundle_id = cbc.bundle_id
+			WHERE cbu.user_id=$1 AND cbc.course_id=$2 LIMIT 1`,
+			userID, courseID).Scan(&bundleAssignmentID)
+
+		if errAssign != nil && errBundle != nil {
+			c.JSON(http.StatusForbidden, gin.H{"error": "purchase required to enroll in this course"})
+			return
+		}
 	}
 
 	now := time.Now()
@@ -105,7 +153,7 @@ func ListMyEnrollments(c *gin.Context) {
 				if !courseIDMap[cID] {
 					courseIDs = append(courseIDs, cID)
 					courseIDMap[cID] = true
-					
+
 					// Create dummy enrollment so it has progress=0
 					enrollments = append(enrollments, models.Enrollment{
 						ID:        uuid.Nil,

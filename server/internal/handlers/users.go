@@ -409,6 +409,12 @@ func SuspendUser(c *gin.Context) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "you can only manage users in your own organization"})
 			return
 		}
+		// BL-008: Prevent a regular admin from suspending other admins or super_admins.
+		// Only a super_admin should be allowed to suspend privileged accounts.
+		if userToToggle.Role == models.RoleAdmin || userToToggle.Role == models.RoleSuperAdmin {
+			c.JSON(http.StatusForbidden, gin.H{"error": "insufficient permissions: cannot suspend admin accounts"})
+			return
+		}
 	}
 
 	_, err = db.Pool.Exec(ctx,

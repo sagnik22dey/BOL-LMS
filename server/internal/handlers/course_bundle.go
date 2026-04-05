@@ -48,6 +48,25 @@ func loadCourseBundleRelations(ctx context.Context, cb *models.CourseBundle) {
 	}
 }
 
+// verifyBundleOwnership checks that the bundle with the given id belongs to callerOrgID.
+// Returns (bundleOrgID, nil) on success, or writes an appropriate HTTP response and returns an error.
+func verifyBundleOwnership(c *gin.Context, ctx context.Context, bundleID uuid.UUID, callerOrgID uuid.UUID) error {
+	var ownerOrgID uuid.UUID
+	if err := db.Pool.QueryRow(ctx, `SELECT organization_id FROM course_bundles WHERE id=$1`, bundleID).Scan(&ownerOrgID); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "course bundle not found"})
+		return err
+	}
+	if ownerOrgID != callerOrgID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "access denied: bundle belongs to a different organization"})
+		return &bundleAccessError{}
+	}
+	return nil
+}
+
+type bundleAccessError struct{}
+
+func (e *bundleAccessError) Error() string { return "bundle access denied" }
+
 func CreateCourseBundle(c *gin.Context) {
 	orgID, err := uuid.Parse(c.GetString("org_id"))
 	if err != nil {
@@ -157,6 +176,13 @@ func UpdateCourseBundle(c *gin.Context) {
 		return
 	}
 
+	// BL-002: Verify ownership before allowing update.
+	callerOrgID, err := uuid.Parse(c.GetString("org_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid org context"})
+		return
+	}
+
 	var req models.UpdateCourseBundleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -165,6 +191,10 @@ func UpdateCourseBundle(c *gin.Context) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+
+	if err := verifyBundleOwnership(c, ctx, id, callerOrgID); err != nil {
+		return
+	}
 
 	currency := req.Currency
 	if currency == "" {
@@ -189,8 +219,19 @@ func DeleteCourseBundle(c *gin.Context) {
 		return
 	}
 
+	// BL-002: Verify ownership before allowing delete.
+	callerOrgID, err := uuid.Parse(c.GetString("org_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid org context"})
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+
+	if err := verifyBundleOwnership(c, ctx, id, callerOrgID); err != nil {
+		return
+	}
 
 	if _, err := db.Pool.Exec(ctx, `DELETE FROM course_bundles WHERE id=$1`, id); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not delete course bundle"})
@@ -206,6 +247,13 @@ func AddUsersToCourseBundle(c *gin.Context) {
 		return
 	}
 
+	// BL-002: Verify ownership before allowing user assignment.
+	callerOrgID, err := uuid.Parse(c.GetString("org_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid org context"})
+		return
+	}
+
 	var req models.AddUsersToCourseBundleRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -215,17 +263,28 @@ func AddUsersToCourseBundle(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	if err := verifyBundleOwnership(c, ctx, id, callerOrgID); err != nil {
+		return
+	}
+
 	for _, uid := range req.UserIDs {
 		userID, err := uuid.Parse(uid)
 		if err != nil {
 			continue
 		}
-		db.Pool.Exec(ctx,
+		// QUAL-001: Check DB error but allow partial success (skip invalid users).
+		if _, err := db.Pool.Exec(ctx,
 			`INSERT INTO course_bundle_users (bundle_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-			id, userID)
+			id, userID); err != nil {
+			continue
+		}
 	}
 
-	db.Pool.Exec(ctx, `UPDATE course_bundles SET updated_at=$1 WHERE id=$2`, time.Now(), id)
+	// QUAL-001: Handle the update error.
+	if _, err := db.Pool.Exec(ctx, `UPDATE course_bundles SET updated_at=$1 WHERE id=$2`, time.Now(), id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not update bundle timestamp"})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"message": "users added"})
 }
 
@@ -241,11 +300,29 @@ func RemoveUserFromCourseBundle(c *gin.Context) {
 		return
 	}
 
+	// BL-002: Verify ownership before allowing user removal.
+	callerOrgID, err := uuid.Parse(c.GetString("org_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid org context"})
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	db.Pool.Exec(ctx, `DELETE FROM course_bundle_users WHERE bundle_id=$1 AND user_id=$2`, id, userID)
-	db.Pool.Exec(ctx, `UPDATE course_bundles SET updated_at=$1 WHERE id=$2`, time.Now(), id)
+	if err := verifyBundleOwnership(c, ctx, id, callerOrgID); err != nil {
+		return
+	}
+
+	// QUAL-001: Handle DB errors.
+	if _, err := db.Pool.Exec(ctx, `DELETE FROM course_bundle_users WHERE bundle_id=$1 AND user_id=$2`, id, userID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not remove user from bundle"})
+		return
+	}
+	if _, err := db.Pool.Exec(ctx, `UPDATE course_bundles SET updated_at=$1 WHERE id=$2`, time.Now(), id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not update bundle timestamp"})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"message": "user removed"})
 }
 
@@ -253,6 +330,13 @@ func AssignCoursesToCourseBundle(c *gin.Context) {
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid course bundle id"})
+		return
+	}
+
+	// BL-002: Verify ownership before allowing course assignment.
+	callerOrgID, err := uuid.Parse(c.GetString("org_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid org context"})
 		return
 	}
 
@@ -265,6 +349,10 @@ func AssignCoursesToCourseBundle(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	if err := verifyBundleOwnership(c, ctx, id, callerOrgID); err != nil {
+		return
+	}
+
 	for _, cid := range req.CourseIDs {
 		courseID, err := uuid.Parse(cid)
 		if err != nil {
@@ -275,7 +363,10 @@ func AssignCoursesToCourseBundle(c *gin.Context) {
 			id, courseID)
 	}
 
-	db.Pool.Exec(ctx, `UPDATE course_bundles SET updated_at=$1 WHERE id=$2`, time.Now(), id)
+	if _, err := db.Pool.Exec(ctx, `UPDATE course_bundles SET updated_at=$1 WHERE id=$2`, time.Now(), id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not update bundle timestamp"})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"message": "courses assigned"})
 }
 
@@ -291,11 +382,29 @@ func RemoveCourseFromCourseBundle(c *gin.Context) {
 		return
 	}
 
+	// BL-002: Verify ownership before allowing course removal.
+	callerOrgID, err := uuid.Parse(c.GetString("org_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid org context"})
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	db.Pool.Exec(ctx, `DELETE FROM course_bundle_courses WHERE bundle_id=$1 AND course_id=$2`, id, courseID)
-	db.Pool.Exec(ctx, `UPDATE course_bundles SET updated_at=$1 WHERE id=$2`, time.Now(), id)
+	if err := verifyBundleOwnership(c, ctx, id, callerOrgID); err != nil {
+		return
+	}
+
+	// QUAL-001: Handle DB errors.
+	if _, err := db.Pool.Exec(ctx, `DELETE FROM course_bundle_courses WHERE bundle_id=$1 AND course_id=$2`, id, courseID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not remove course from bundle"})
+		return
+	}
+	if _, err := db.Pool.Exec(ctx, `UPDATE course_bundles SET updated_at=$1 WHERE id=$2`, time.Now(), id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not update bundle timestamp"})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"message": "course removed"})
 }
 
@@ -306,16 +415,38 @@ func AssignCourseToUser(c *gin.Context) {
 		return
 	}
 
+	// BL-003: Verify target user belongs to the calling admin's organization.
+	adminOrgID, err := uuid.Parse(c.GetString("org_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid org context"})
+		return
+	}
+
 	var req models.AssignCourseRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	assignedBy, _ := uuid.Parse(c.GetString("user_id"))
+	assignedBy, err := uuid.Parse(c.GetString("user_id"))
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid caller context"})
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+
+	// BL-003: Confirm target user is in the admin's org before assigning courses.
+	var targetOrgID *uuid.UUID
+	if err := db.Pool.QueryRow(ctx, `SELECT organization_id FROM users WHERE id=$1`, userID).Scan(&targetOrgID); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return
+	}
+	if targetOrgID == nil || *targetOrgID != adminOrgID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "access denied: user does not belong to your organization"})
+		return
+	}
 
 	for _, cidStr := range req.CourseIDs {
 		courseID, err := uuid.Parse(cidStr)
@@ -344,8 +475,25 @@ func RevokeCourseFromUser(c *gin.Context) {
 		return
 	}
 
+	// BL-003: Verify target user belongs to the calling admin's organization.
+	adminOrgID, err := uuid.Parse(c.GetString("org_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid org context"})
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+
+	var targetOrgID *uuid.UUID
+	if err := db.Pool.QueryRow(ctx, `SELECT organization_id FROM users WHERE id=$1`, userID).Scan(&targetOrgID); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return
+	}
+	if targetOrgID == nil || *targetOrgID != adminOrgID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "access denied: user does not belong to your organization"})
+		return
+	}
 
 	_, err = db.Pool.Exec(ctx,
 		`DELETE FROM user_course_assignments WHERE user_id=$1 AND course_id=$2`, userID, courseID)
@@ -363,8 +511,25 @@ func GetUserIndividualCourses(c *gin.Context) {
 		return
 	}
 
+	// BL-003: Verify target user belongs to the calling admin's organization.
+	adminOrgID, err := uuid.Parse(c.GetString("org_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid org context"})
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
+
+	var targetOrgID *uuid.UUID
+	if err := db.Pool.QueryRow(ctx, `SELECT organization_id FROM users WHERE id=$1`, userID).Scan(&targetOrgID); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return
+	}
+	if targetOrgID == nil || *targetOrgID != adminOrgID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "access denied: user does not belong to your organization"})
+		return
+	}
 
 	rows, err := db.Pool.Query(ctx,
 		`SELECT id, user_id, course_id, assigned_by, assigned_at
