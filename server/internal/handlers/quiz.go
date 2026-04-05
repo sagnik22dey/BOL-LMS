@@ -336,6 +336,42 @@ func UnlockQuizRetake(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "retake unlocked"})
 }
 
+func UpdateQuiz(c *gin.Context) {
+	quizIDStr := c.Param("quizId")
+	quizID, err := uuid.Parse(quizIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid quiz id"})
+		return
+	}
+
+	var quiz models.Quiz
+	if err := c.ShouldBindJSON(&quiz); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	questionsJSON, err := json.Marshal(quiz.Questions)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to marshal questions"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err = db.Pool.Exec(ctx,
+		`UPDATE quizzes SET title=$1, time_limit_mins=$2, questions=$3 WHERE id=$4`,
+		quiz.Title, quiz.TimeLimitMins, questionsJSON, quizID,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update quiz"})
+		return
+	}
+
+	quiz.ID = quizID
+	c.JSON(http.StatusOK, quiz)
+}
+
 func GetQuiz(c *gin.Context) {
 	quizID, err := uuid.Parse(c.Param("quizId"))
 	if err != nil {

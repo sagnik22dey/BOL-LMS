@@ -9,11 +9,17 @@ import (
 )
 
 type Config struct {
-	Port            string
-	JWTSecret       string
-	JWTExpiryHours  int
-	PostgresDSN     string
-	MinioEndpoint   string
+	Port           string
+	JWTSecret      string
+	JWTExpiryHours int
+	PostgresDSN    string
+	MinioEndpoint  string
+	// MinioPublicURL is the externally accessible base URL for MinIO (e.g.
+	// "https://minio.example.com" or "https://storage.railway.app").  When set,
+	// presigned URLs have their host/scheme rewritten to this value so that
+	// browsers can reach the object storage directly.  If empty the raw URL
+	// returned by the MinIO SDK (which uses MinioEndpoint) is used as-is.
+	MinioPublicURL  string
 	MinioAccessKey  string
 	MinioSecretKey  string
 	MinioUseSSL     bool
@@ -44,6 +50,7 @@ func Load() {
 		JWTExpiryHours:  expiry,
 		PostgresDSN:     getEnv("POSTGRES_DSN", ""),
 		MinioEndpoint:   getEnv("MINIO_ENDPOINT", "localhost:9000"),
+		MinioPublicURL:  getEnv("MINIO_PUBLIC_URL", ""),
 		MinioAccessKey:  getEnv("MINIO_ACCESS_KEY", ""),
 		MinioSecretKey:  getEnv("MINIO_SECRET_KEY", ""),
 		MinioUseSSL:     useSSL,

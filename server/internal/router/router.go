@@ -145,6 +145,7 @@ func Setup() *gin.Engine {
 			adminCourses.PUT("/:id", handlers.UpdateCourse)
 			adminCourses.DELETE("/:id", handlers.DeleteCourse)
 			adminCourses.POST("/:id/modules/:moduleId/quizzes", handlers.CreateQuiz)
+			adminCourses.PUT("/:id/modules/:moduleId/quizzes/:quizId", handlers.UpdateQuiz)
 			adminCourses.GET("/:id/modules/:moduleId/quizzes/:quizId/submissions", handlers.ListSubmissions)
 			adminCourses.POST("/:id/modules/:moduleId/assignments", handlers.CreateAssignment)
 			adminCourses.GET("/:id/modules/:moduleId/assessments", handlers.GetModuleAssessments)

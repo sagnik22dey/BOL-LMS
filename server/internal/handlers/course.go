@@ -220,7 +220,7 @@ func GeneratePresignURL(c *gin.Context) {
 
 	expiry := time.Duration(req.ExpiryMins) * time.Minute
 	if expiry == 0 {
-		expiry = 15 * time.Minute
+		expiry = 60 * time.Minute // default raised from 15→60 min; large video uploads need more time
 	}
 	// Cap expiry to 60 minutes to limit presigned URL lifetime
 	if expiry > 60*time.Minute {

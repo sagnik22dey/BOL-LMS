@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/url"
+	"strings"
 	"time"
 
 	"bol-lms-server/config"
@@ -64,6 +65,43 @@ func ensureBucket(name string) {
 	}
 }
 
+// rewritePresignedURL replaces the scheme+host in a MinIO-generated presigned
+// URL with the externally accessible public URL configured via MINIO_PUBLIC_URL.
+//
+// Why this is needed: the MinIO Go SDK embeds the endpoint passed to minio.New()
+// into the generated presigned URL.  In containerised / Railway deployments that
+// endpoint is an *internal* hostname (e.g. "minio.railway.internal:9000") which
+// is unreachable from a browser.  Setting MINIO_PUBLIC_URL to the externally
+// reachable base URL (e.g. "https://minio.example.com") causes the path,
+// signature and all other query parameters to be preserved while only the
+// host/scheme are swapped — the HMAC signature remains valid because MinIO
+// validates only the signing inputs, not the transport host.
+func rewritePresignedURL(rawURL string) (string, error) {
+	pub := strings.TrimRight(config.App.MinioPublicURL, "/")
+	if pub == "" {
+		// No public URL configured — return as-is (works when endpoint IS public).
+		return rawURL, nil
+	}
+
+	pubParsed, err := url.Parse(pub)
+	if err != nil {
+		return rawURL, fmt.Errorf("MINIO_PUBLIC_URL is not a valid URL: %w", err)
+	}
+
+	generated, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL, fmt.Errorf("could not parse generated presigned URL: %w", err)
+	}
+
+	// Swap scheme and host; keep path + query (signature) intact.
+	generated.Scheme = pubParsed.Scheme
+	generated.Host = pubParsed.Host
+
+	rewritten := generated.String()
+	log.Printf("[minio] presigned URL rewritten: internal_host=%q → public_host=%q", pubParsed.Host, generated.Host)
+	return rewritten, nil
+}
+
 func PresignedPutURL(bucket, objectName string, expiry time.Duration) (string, error) {
 	if Client == nil {
 		return "", fmt.Errorf("minio client is not initialized")
@@ -77,7 +115,8 @@ func PresignedPutURL(bucket, objectName string, expiry time.Duration) (string, e
 		log.Printf("[minio] PresignedPutObject error bucket=%q object=%q: %v", bucket, objectName, err)
 		return "", err
 	}
-	return u.String(), nil
+	log.Printf("[presign] bucket=%q object=%q expiry=%v raw_host=%q", bucket, objectName, expiry, u.Host)
+	return rewritePresignedURL(u.String())
 }
 
 func PresignedGetURL(bucket, objectName string, expiry time.Duration) (string, error) {
@@ -90,5 +129,6 @@ func PresignedGetURL(bucket, objectName string, expiry time.Duration) (string, e
 		log.Printf("[minio] PresignedGetObject error bucket=%q object=%q: %v", bucket, objectName, err)
 		return "", err
 	}
-	return u.String(), nil
+	log.Printf("[presign] bucket=%q object=%q expiry=%v raw_host=%q", bucket, objectName, expiry, u.Host)
+	return rewritePresignedURL(u.String())
 }

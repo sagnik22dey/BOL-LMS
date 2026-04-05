@@ -14,7 +14,7 @@ const QuizEditor = ({ material, courseId, moduleId, onSave }) => {
   });
 
   useEffect(() => {
-    if (material.file_key && material.file_key.length === 24) {
+    if (material.file_key && material.file_key.trim().length > 0) {
       setLoading(true);
       api.get(`/api/quizzes/${material.file_key}`)
         .then((res) => { setQuizData(res.data); setLoading(false); })
@@ -63,11 +63,25 @@ const QuizEditor = ({ material, courseId, moduleId, onSave }) => {
   };
 
   const handleSubmit = async () => {
+    if (!quizData.title || quizData.questions.length === 0) {
+      alert('Please add at least one question');
+      return;
+    }
     setLoading(true);
     setError('');
     try {
-      const res = await api.post(`/api/courses/${courseId}/modules/${moduleId}/quizzes`, quizData);
-      onSave(res.data.id);
+      if (material.file_key && material.file_key.trim().length > 0) {
+        // Update existing quiz
+        await api.put(
+          `/api/courses/${courseId}/modules/${moduleId}/quizzes/${material.file_key}`,
+          quizData
+        );
+        onSave(material.file_key);
+      } else {
+        // Create new quiz
+        const res = await api.post(`/api/courses/${courseId}/modules/${moduleId}/quizzes`, quizData);
+        onSave(res.data.id);
+      }
     } catch (err) {
       console.error(err);
       setError('Failed to save quiz to backend.');
