@@ -238,6 +238,40 @@ func GeneratePresignURL(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"url": putURL, "object_name": req.ObjectName})
 }
 
+// GenerateStudentPresignURL allows enrolled students (any authenticated user) to get a
+// presigned PUT URL, but is restricted to the documents bucket only (for assignment uploads).
+func GenerateStudentPresignURL(c *gin.Context) {
+	var req models.PresignRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// SEC-004: Students may only upload to the documents bucket, not videos.
+	if req.Bucket != config.App.MinioBucketDocs {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "students may only upload to the documents bucket"})
+		return
+	}
+
+	expiry := time.Duration(req.ExpiryMins) * time.Minute
+	if expiry == 0 {
+		expiry = 15 * time.Minute
+	}
+	if expiry > 30*time.Minute {
+		expiry = 30 * time.Minute
+	}
+
+	log.Printf("[student-presign] bucket=%q object=%q expiry=%v", req.Bucket, req.ObjectName, expiry)
+
+	putURL, err := storage.PresignedPutURL(req.Bucket, req.ObjectName, expiry)
+	if err != nil {
+		log.Printf("[student-presign] PresignedPutURL error: %v", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not generate presigned URL"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"url": putURL, "object_name": req.ObjectName})
+}
+
 func GeneratePresignGetURL(c *gin.Context) {
 	objectName := c.Query("object_name")
 	if objectName == "" {

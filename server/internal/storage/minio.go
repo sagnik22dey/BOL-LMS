@@ -59,9 +59,9 @@ func ensureBucket(name string) {
 	if !exists {
 		if err = Client.MakeBucket(ctx, name, minio.MakeBucketOptions{}); err != nil {
 			log.Printf("MinIO bucket create error (%s): %v", name, err)
-		} else {
-			log.Printf("MinIO bucket created: %s", name)
+			return
 		}
+		log.Printf("MinIO bucket created: %s", name)
 	}
 }
 

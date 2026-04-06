@@ -114,6 +114,7 @@ const CourseView = () => {
 
   const isEnrolled = isAdmin || course.is_enrolled === true;
   const isVideo = activeMaterial?.type === 'video';
+  const isAssessment = activeMaterial?.type === 'quiz' || activeMaterial?.type === 'assignment';
   const instructorInitial = course.instructor_name?.charAt(0).toUpperCase() || 'I';
   const instructorName = course.instructor_name || 'Instructor';
   
@@ -206,18 +207,6 @@ const CourseView = () => {
             </div>
           </div>
         );
-      case 'quiz':
-        return (
-          <div className="w-full h-full overflow-y-auto bg-white p-6 md:p-10">
-            <QuizView quizId={activeMaterial.file_key} />
-          </div>
-        );
-      case 'assignment':
-        return (
-          <div className="w-full h-full overflow-y-auto bg-white p-6 md:p-10">
-            <AssignmentView assignmentId={activeMaterial.file_key} />
-          </div>
-        );
       default:
         if (activeMaterial.file_key && fileUrl) {
           return <div className="w-full h-full"><DocumentViewer url={fileUrl} fileType={activeMaterial.type} /></div>;
@@ -298,146 +287,184 @@ const CourseView = () => {
           onMouseEnter={() => setHoveringContent(true)}
           onMouseLeave={() => setHoveringContent(false)}
         >
-          {/* Player */}
-          <div
-            className="w-full bg-gray-950 relative"
-            style={
-              isVideo
-                ? { aspectRatio: '16/9', maxHeight: `calc(100vh - ${NAV_H + 48}px)` }
-                : { height: '60vh', minHeight: 300 }
-            }
-          >
-            {renderPlayer()}
-
-            {!sidebarOpen && (
-              <button
-                ref={toggleRef}
-                onClick={() => setSidebarOpen(true)}
-                className={`absolute right-0 top-1/2 -translate-y-1/2 z-20 flex items-center gap-1 px-2 py-6 rounded-l-lg transition-all duration-200 ${
-                  hoveringContent
-                    ? 'opacity-100 translate-x-0'
-                    : 'opacity-0 translate-x-2 pointer-events-none'
-                } bg-gray-800/90 hover:bg-gray-700 text-white shadow-lg backdrop-blur-sm`}
-                title="Show course content"
-              >
-                <span className="material-symbols-outlined text-lg">chevron_left</span>
-              </button>
-            )}
-          </div>
-
-          {/* Tab bar */}
-          <div className="sticky top-0 z-10 bg-white border-b border-gray-200 px-4 md:px-6">
-            <div className="flex items-center gap-1 overflow-x-auto hide-scrollbar">
-              {[
-                'Overview',
-                ...(isEnrolled ? ['Q&A'] : []),
-              ].map((label, i) => (
-                <button
-                  key={label}
-                  onClick={() => setTab(i)}
-                  className={`py-3 px-3 text-sm font-bold font-headline whitespace-nowrap border-b-2 transition-colors ${
-                    tab === i
-                      ? 'border-gray-900 text-gray-900'
-                      : 'border-transparent text-gray-500 hover:text-gray-800'
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Tab content */}
-          <div className="p-6 md:p-8 lg:p-10 max-w-4xl">
-            {tab === 0 && (
-              <div className="space-y-6">
-                <div>
-                  <h1 className="text-xl md:text-2xl font-extrabold font-headline text-gray-900 mb-1">
-                    {isEnrolled ? (activeMaterial?.title || course.title) : course.title}
-                  </h1>
-                  {isEnrolled && activeModule && (
-                    <p className="text-xs text-gray-400 font-semibold uppercase tracking-wider">
-                      {activeModule.title}
-                    </p>
-                  )}
-                </div>
-
-                <p className="text-gray-600 font-body leading-relaxed">
-                  {course.description || 'No description provided.'}
-                </p>
-
-                {!isEnrolled && (
-                  <div className="p-4 bg-amber-50 rounded-lg border border-amber-200 flex items-start gap-3">
-                    <span className="material-symbols-outlined text-amber-500 mt-0.5 text-xl">info</span>
-                    <div>
-                      <p className="font-headline font-bold text-amber-900 mb-0.5 text-sm">Purchase required</p>
-                      <p className="text-amber-800 text-xs">Buy this course to access all modules and materials.</p>
-                    </div>
-                  </div>
+          {/* ── Assessment materials (quiz/assignment) get full-page treatment ── */}
+          {isEnrolled && isAssessment ? (
+            <div className="relative">
+              {/* Breadcrumb bar */}
+              <div className="sticky top-0 z-10 bg-white border-b border-gray-200 px-4 md:px-6 h-12 flex items-center gap-2">
+                <span className="material-symbols-outlined text-gray-400 text-base">
+                  {activeMaterial?.type === 'quiz' ? 'quiz' : 'assignment'}
+                </span>
+                <p className="text-sm font-semibold text-gray-700 truncate">{activeMaterial?.title}</p>
+                {activeModule && (
+                  <>
+                    <span className="text-gray-300 text-sm">·</span>
+                    <p className="text-xs text-gray-400 truncate hidden sm:block">{activeModule.title}</p>
+                  </>
                 )}
-
-                <div className="flex items-center gap-3 py-2">
-                  <div className="w-10 h-10 rounded-full bg-gray-200 text-gray-700 flex items-center justify-center font-bold text-sm font-headline">
-                    {instructorInitial}
-                  </div>
-                  <div>
-                    <p className="font-headline font-bold text-gray-900 text-sm">{instructorName}</p>
-                    <p className="text-xs text-gray-400">Instructor</p>
-                  </div>
-                </div>
-
-                {course.instructor_bio && (
-                  <p className="text-sm text-gray-500 font-body leading-relaxed">
-                    {course.instructor_bio}
-                  </p>
-                )}
-
-                {!isEnrolled && course.price > 0 && (
-                  <div className="flex items-center gap-4 p-5 bg-gray-50 border border-gray-200 rounded-lg">
-                    <div>
-                      <p className="font-headline font-extrabold text-2xl text-gray-900">
-                        {course.currency} {course.price}
-                      </p>
-                      <p className="text-xs text-gray-400">
-                        {course.validity_days ? `${course.validity_days}-day access` : 'Lifetime access'}
-                      </p>
-                    </div>
-                    <button
-                      onClick={handleAddToCart}
-                      disabled={cartLoading}
-                      className="ml-auto flex items-center gap-2 px-5 py-2.5 bg-primary text-white font-headline font-bold rounded-lg hover:bg-primary/90 transition-all disabled:opacity-60"
-                    >
-                      {cartLoading
-                        ? <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                        : <span className="material-symbols-outlined text-[18px]">shopping_cart</span>
-                      }
-                      Add to Cart
-                    </button>
-                  </div>
+                {!sidebarOpen && (
+                  <button
+                    onClick={() => setSidebarOpen(true)}
+                    className="ml-auto flex items-center gap-1 text-xs text-gray-500 hover:text-gray-800 px-2 py-1 rounded-lg hover:bg-gray-100 transition-colors flex-shrink-0"
+                  >
+                    <span className="material-symbols-outlined text-base">menu_book</span>
+                    <span className="hidden sm:inline">Course Content</span>
+                  </button>
                 )}
               </div>
-            )}
 
-            {tab === 1 && isEnrolled && (
-              <div>
-                {activeModule
-                  ? <CommentSection moduleId={activeModule.id} />
-                  : <p className="text-gray-400 text-sm">Select a module first.</p>
+              {/* Full-width quiz or assignment view */}
+              {activeMaterial?.type === 'quiz' && (
+                <QuizView key={activeMaterial.file_key} quizId={activeMaterial.file_key} />
+              )}
+              {activeMaterial?.type === 'assignment' && (
+                <AssignmentView key={activeMaterial.file_key} assignmentId={activeMaterial.file_key} />
+              )}
+            </div>
+          ) : (
+            <>
+              {/* ── Media player box (video / pdf / text) ── */}
+              <div
+                className="w-full bg-gray-950 relative"
+                style={
+                  isVideo
+                    ? { aspectRatio: '16/9', maxHeight: `calc(100vh - ${NAV_H + 48}px)` }
+                    : { height: '60vh', minHeight: 300 }
                 }
-              </div>
-            )}
-          </div>
+              >
+                {renderPlayer()}
 
-          {/* Footer */}
-          <footer className="bg-gray-900 text-white/60 py-8 px-8">
-            <div className="max-w-4xl flex flex-col sm:flex-row justify-between items-center gap-4">
-              <p className="text-xs tracking-wide">© {new Date().getFullYear()} BOL-LMS. Elevating Intellectual Curiosity.</p>
-              <div className="flex items-center gap-4 text-xs">
-                <span className="hover:text-white cursor-pointer transition-colors">Privacy Policy</span>
-                <span className="hover:text-white cursor-pointer transition-colors">Terms</span>
+                {!sidebarOpen && (
+                  <button
+                    ref={toggleRef}
+                    onClick={() => setSidebarOpen(true)}
+                    className={`absolute right-0 top-1/2 -translate-y-1/2 z-20 flex items-center gap-1 px-2 py-6 rounded-l-lg transition-all duration-200 ${
+                      hoveringContent
+                        ? 'opacity-100 translate-x-0'
+                        : 'opacity-0 translate-x-2 pointer-events-none'
+                    } bg-gray-800/90 hover:bg-gray-700 text-white shadow-lg backdrop-blur-sm`}
+                    title="Show course content"
+                  >
+                    <span className="material-symbols-outlined text-lg">chevron_left</span>
+                  </button>
+                )}
               </div>
-            </div>
-          </footer>
+
+              {/* Tab bar */}
+              <div className="sticky top-0 z-10 bg-white border-b border-gray-200 px-4 md:px-6">
+                <div className="flex items-center gap-1 overflow-x-auto hide-scrollbar">
+                  {[
+                    'Overview',
+                    ...(isEnrolled ? ['Q&A'] : []),
+                  ].map((label, i) => (
+                    <button
+                      key={label}
+                      onClick={() => setTab(i)}
+                      className={`py-3 px-3 text-sm font-bold font-headline whitespace-nowrap border-b-2 transition-colors ${
+                        tab === i
+                          ? 'border-gray-900 text-gray-900'
+                          : 'border-transparent text-gray-500 hover:text-gray-800'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Tab content */}
+              <div className="p-6 md:p-8 lg:p-10 max-w-4xl">
+                {tab === 0 && (
+                  <div className="space-y-6">
+                    <div>
+                      <h1 className="text-xl md:text-2xl font-extrabold font-headline text-gray-900 mb-1">
+                        {isEnrolled ? (activeMaterial?.title || course.title) : course.title}
+                      </h1>
+                      {isEnrolled && activeModule && (
+                        <p className="text-xs text-gray-400 font-semibold uppercase tracking-wider">
+                          {activeModule.title}
+                        </p>
+                      )}
+                    </div>
+
+                    <p className="text-gray-600 font-body leading-relaxed">
+                      {course.description || 'No description provided.'}
+                    </p>
+
+                    {!isEnrolled && (
+                      <div className="p-4 bg-amber-50 rounded-lg border border-amber-200 flex items-start gap-3">
+                        <span className="material-symbols-outlined text-amber-500 mt-0.5 text-xl">info</span>
+                        <div>
+                          <p className="font-headline font-bold text-amber-900 mb-0.5 text-sm">Purchase required</p>
+                          <p className="text-amber-800 text-xs">Buy this course to access all modules and materials.</p>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="flex items-center gap-3 py-2">
+                      <div className="w-10 h-10 rounded-full bg-gray-200 text-gray-700 flex items-center justify-center font-bold text-sm font-headline">
+                        {instructorInitial}
+                      </div>
+                      <div>
+                        <p className="font-headline font-bold text-gray-900 text-sm">{instructorName}</p>
+                        <p className="text-xs text-gray-400">Instructor</p>
+                      </div>
+                    </div>
+
+                    {course.instructor_bio && (
+                      <p className="text-sm text-gray-500 font-body leading-relaxed">
+                        {course.instructor_bio}
+                      </p>
+                    )}
+
+                    {!isEnrolled && course.price > 0 && (
+                      <div className="flex items-center gap-4 p-5 bg-gray-50 border border-gray-200 rounded-lg">
+                        <div>
+                          <p className="font-headline font-extrabold text-2xl text-gray-900">
+                            {course.currency} {course.price}
+                          </p>
+                          <p className="text-xs text-gray-400">
+                            {course.validity_days ? `${course.validity_days}-day access` : 'Lifetime access'}
+                          </p>
+                        </div>
+                        <button
+                          onClick={handleAddToCart}
+                          disabled={cartLoading}
+                          className="ml-auto flex items-center gap-2 px-5 py-2.5 bg-primary text-white font-headline font-bold rounded-lg hover:bg-primary/90 transition-all disabled:opacity-60"
+                        >
+                          {cartLoading
+                            ? <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                            : <span className="material-symbols-outlined text-[18px]">shopping_cart</span>
+                          }
+                          Add to Cart
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {tab === 1 && isEnrolled && (
+                  <div>
+                    {activeModule
+                      ? <CommentSection moduleId={activeModule.id} />
+                      : <p className="text-gray-400 text-sm">Select a module first.</p>
+                    }
+                  </div>
+                )}
+              </div>
+
+              {/* Footer */}
+              <footer className="bg-gray-900 text-white/60 py-8 px-8">
+                <div className="max-w-4xl flex flex-col sm:flex-row justify-between items-center gap-4">
+                  <p className="text-xs tracking-wide">© {new Date().getFullYear()} BOL-LMS. Elevating Intellectual Curiosity.</p>
+                  <div className="flex items-center gap-4 text-xs">
+                    <span className="hover:text-white cursor-pointer transition-colors">Privacy Policy</span>
+                    <span className="hover:text-white cursor-pointer transition-colors">Terms</span>
+                  </div>
+                </div>
+              </footer>
+            </>
+          )}
         </div>
 
         {/* ── RIGHT sidebar ── */}

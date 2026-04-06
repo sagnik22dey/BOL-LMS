@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"time"
 
@@ -11,6 +12,40 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
+
+// QuizSubmissionDetail is the enriched response type for admin assessment view.
+type QuizSubmissionDetail struct {
+	ID            uuid.UUID                 `json:"id"`
+	QuizID        uuid.UUID                 `json:"quiz_id"`
+	QuizTitle     string                    `json:"quiz_title"`
+	QuizQuestions []models.Question         `json:"quiz_questions"`
+	ModuleID      uuid.UUID                 `json:"module_id"`
+	UserID        uuid.UUID                 `json:"user_id"`
+	UserName      string                    `json:"user_name"`
+	UserEmail     string                    `json:"user_email"`
+	Answers       []models.SubmissionAnswer `json:"answers"`
+	Score         int                       `json:"score"`
+	MaxScore      int                       `json:"max_score"`
+	IsGraded      bool                      `json:"is_graded"`
+	GradedBy      *uuid.UUID                `json:"graded_by,omitempty"`
+	StartedAt     time.Time                 `json:"started_at"`
+	SubmittedAt   *time.Time                `json:"submitted_at,omitempty"`
+	RetakeAllowed bool                      `json:"retake_allowed"`
+}
+
+// AssignmentSubmissionDetail is the enriched response type for admin assessment view.
+type AssignmentSubmissionDetail struct {
+	ID              uuid.UUID `json:"id"`
+	AssignmentID    uuid.UUID `json:"assignment_id"`
+	AssignmentTitle string    `json:"assignment_title"`
+	ModuleID        uuid.UUID `json:"module_id"`
+	UserID          uuid.UUID `json:"user_id"`
+	UserName        string    `json:"user_name"`
+	UserEmail       string    `json:"user_email"`
+	FilePath        string    `json:"file_path"`
+	SubmittedAt     time.Time `json:"submitted_at"`
+	RetakeAllowed   bool      `json:"retake_allowed"`
+}
 
 func CreateAssignment(c *gin.Context) {
 	orgID, _ := uuid.Parse(c.GetString("org_id"))
@@ -158,69 +193,100 @@ func ResetAssignment(c *gin.Context) {
 }
 
 func GetModuleAssessments(c *gin.Context) {
+	courseID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid course id"})
+		return
+	}
 	moduleID, err := uuid.Parse(c.Param("moduleId"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid module id"})
 		return
 	}
 
-	// BL-006: Verify the module's quiz/assignment belongs to the calling admin's org
-	// before returning any user submission data.
+	// BL-006: Verify the course belongs to the calling admin's org before returning
+	// any user submission data. Use the course record directly so that modules
+	// without any assessments yet are not rejected.
 	callerOrgID, err := uuid.Parse(c.GetString("org_id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid org context"})
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// Check org ownership via the quizzes table (module must have at least a quiz or assignment in the org)
-	var assignmentOrgID uuid.UUID
-	ownershipErr := db.Pool.QueryRow(ctx,
-		`SELECT organization_id FROM assignments WHERE module_id=$1 LIMIT 1`, moduleID).Scan(&assignmentOrgID)
-
-	if ownershipErr != nil {
-		// Try via quizzes table if no assignment found
-		var quizOrgID uuid.UUID
-		if qErr := db.Pool.QueryRow(ctx,
-			`SELECT organization_id FROM quizzes WHERE module_id=$1 LIMIT 1`, moduleID).Scan(&quizOrgID); qErr != nil {
-			c.JSON(http.StatusNotFound, gin.H{"error": "no assessments found for this module"})
-			return
-		} else if quizOrgID != callerOrgID {
-			c.JSON(http.StatusForbidden, gin.H{"error": "access denied: module belongs to a different organization"})
-			return
-		}
-	} else if assignmentOrgID != callerOrgID {
-		c.JSON(http.StatusForbidden, gin.H{"error": "access denied: module belongs to a different organization"})
+	var courseOrgID uuid.UUID
+	if err := db.Pool.QueryRow(ctx,
+		`SELECT organization_id FROM courses WHERE id=$1`, courseID).Scan(&courseOrgID); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "course not found"})
+		return
+	}
+	if courseOrgID != callerOrgID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "access denied: course belongs to a different organization"})
 		return
 	}
 
-	quizzes := []models.Submission{}
-	qRows, _ := db.Pool.Query(ctx,
-		`SELECT id, quiz_id, module_id, user_id, answers, score, max_score, is_graded, graded_by, started_at, submitted_at, retake_allowed
-		 FROM submissions WHERE module_id = $1`, moduleID)
-	if qRows != nil {
+	// Fetch quiz submissions enriched with user name/email and quiz title+questions
+	quizzes := []QuizSubmissionDetail{}
+	qRows, qErr := db.Pool.Query(ctx,
+		`SELECT s.id, s.quiz_id, q.title, q.questions, s.module_id, s.user_id,
+		        u.name, u.email,
+		        s.answers, s.score, s.max_score, s.is_graded, s.graded_by,
+		        s.started_at, s.submitted_at, s.retake_allowed
+		 FROM submissions s
+		 JOIN quizzes q ON q.id = s.quiz_id
+		 JOIN users u ON u.id = s.user_id
+		 WHERE s.module_id = $1`, moduleID)
+	if qErr == nil && qRows != nil {
 		defer qRows.Close()
 		for qRows.Next() {
-			s, err := scanSubmission(qRows)
-			if err == nil {
-				quizzes = append(quizzes, s)
+			var d QuizSubmissionDetail
+			var rawAnswers []byte
+			var rawQuestions []byte
+			if err := qRows.Scan(
+				&d.ID, &d.QuizID, &d.QuizTitle, &rawQuestions, &d.ModuleID, &d.UserID,
+				&d.UserName, &d.UserEmail,
+				&rawAnswers, &d.Score, &d.MaxScore, &d.IsGraded, &d.GradedBy,
+				&d.StartedAt, &d.SubmittedAt, &d.RetakeAllowed,
+			); err == nil {
+				if len(rawAnswers) > 0 {
+					_ = json.Unmarshal(rawAnswers, &d.Answers)
+				}
+				if d.Answers == nil {
+					d.Answers = []models.SubmissionAnswer{}
+				}
+				if len(rawQuestions) > 0 {
+					_ = json.Unmarshal(rawQuestions, &d.QuizQuestions)
+				}
+				if d.QuizQuestions == nil {
+					d.QuizQuestions = []models.Question{}
+				}
+				quizzes = append(quizzes, d)
 			}
 		}
 	}
 
-	assignments := []models.AssignmentSubmission{}
-	aRows, _ := db.Pool.Query(ctx,
-		`SELECT id, assignment_id, module_id, user_id, file_path, submitted_at, retake_allowed
-		 FROM assignment_submissions WHERE module_id = $1`, moduleID)
-	if aRows != nil {
+	// Fetch assignment submissions enriched with user name/email and assignment title
+	assignments := []AssignmentSubmissionDetail{}
+	aRows, aErr := db.Pool.Query(ctx,
+		`SELECT asub.id, asub.assignment_id, a.title, asub.module_id, asub.user_id,
+		        u.name, u.email,
+		        asub.file_path, asub.submitted_at, asub.retake_allowed
+		 FROM assignment_submissions asub
+		 JOIN assignments a ON a.id = asub.assignment_id
+		 JOIN users u ON u.id = asub.user_id
+		 WHERE asub.module_id = $1`, moduleID)
+	if aErr == nil && aRows != nil {
 		defer aRows.Close()
 		for aRows.Next() {
-			var as models.AssignmentSubmission
-			if err := aRows.Scan(&as.ID, &as.AssignmentID, &as.ModuleID, &as.UserID,
-				&as.FilePath, &as.SubmittedAt, &as.RetakeAllowed); err == nil {
-				assignments = append(assignments, as)
+			var d AssignmentSubmissionDetail
+			if err := aRows.Scan(
+				&d.ID, &d.AssignmentID, &d.AssignmentTitle, &d.ModuleID, &d.UserID,
+				&d.UserName, &d.UserEmail,
+				&d.FilePath, &d.SubmittedAt, &d.RetakeAllowed,
+			); err == nil {
+				assignments = append(assignments, d)
 			}
 		}
 	}
@@ -229,6 +295,60 @@ func GetModuleAssessments(c *gin.Context) {
 		"quizzes":     quizzes,
 		"assignments": assignments,
 	})
+}
+
+// GradeSubmission allows an admin to manually set a score on a quiz submission
+// (used for written-answer questions where auto-grading is not possible).
+func GradeSubmission(c *gin.Context) {
+	submissionID, err := uuid.Parse(c.Param("submissionId"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid submission id"})
+		return
+	}
+
+	callerOrgID, err := uuid.Parse(c.GetString("org_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid org context"})
+		return
+	}
+	graderID, err := uuid.Parse(c.GetString("user_id"))
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid user context"})
+		return
+	}
+
+	var payload struct {
+		Score int `json:"score" binding:"required,min=0"`
+	}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Verify the quiz for this submission belongs to the caller's org
+	var quizOrgID uuid.UUID
+	if err := db.Pool.QueryRow(ctx,
+		`SELECT q.organization_id FROM submissions s JOIN quizzes q ON q.id = s.quiz_id WHERE s.id=$1`,
+		submissionID).Scan(&quizOrgID); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "submission not found"})
+		return
+	}
+	if quizOrgID != callerOrgID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "access denied"})
+		return
+	}
+
+	_, err = db.Pool.Exec(ctx,
+		`UPDATE submissions SET score=$1, is_graded=TRUE, graded_by=$2 WHERE id=$3`,
+		payload.Score, graderID, submissionID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not save grade"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "graded", "score": payload.Score})
 }
 
 func GetAssignment(c *gin.Context) {

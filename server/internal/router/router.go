@@ -151,6 +151,7 @@ func Setup() *gin.Engine {
 			adminCourses.GET("/:id/modules/:moduleId/assessments", handlers.GetModuleAssessments)
 			adminCourses.PATCH("/:id/modules/:moduleId/quizzes/:quizId/retake/:userId", handlers.UnlockQuizRetake)
 			adminCourses.PATCH("/:id/modules/:moduleId/assignments/:assignmentId/reset/:userId", handlers.ResetAssignment)
+			adminCourses.PATCH("/:id/modules/:moduleId/submissions/:submissionId/grade", handlers.GradeSubmission)
 			// SEC-003: presign for file uploads is admin-only
 			adminCourses.POST("/presign", handlers.GeneratePresignURL)
 		}
@@ -164,6 +165,9 @@ func Setup() *gin.Engine {
 	studentCourses.Use(middleware.AuthRequired()) // Any authenticated user
 	{
 		studentCourses.GET("/presign-get", handlers.GeneratePresignGetURL)
+		// SEC-004: Students may upload assignment files only to the documents bucket.
+		// This is a restricted presign-put for enrolled users uploading assignment submissions.
+		studentCourses.POST("/presign-put", handlers.GenerateStudentPresignURL)
 		studentCourses.POST("/enroll", handlers.EnrollUser)
 		studentCourses.GET("/my-courses", handlers.ListMyEnrollments)
 	}
