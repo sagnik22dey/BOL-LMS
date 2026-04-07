@@ -4,8 +4,21 @@ import { useCourseStore } from '../../store/courseStore';
 import { useAuthStore } from '../../store/authStore';
 import useCartStore from '../../store/cartStore';
 
-const CourseCard = ({ course, isAdmin, onTogglePublish }) => {
-  const { addToCart, loading } = useCartStore();
+const CourseCard = ({ course, isAdmin, onTogglePublish, onDelete, enrolledCourseIds }) => {
+  const { addToCart, loading: cartLoading } = useCartStore();
+  const { enrollFree, loading: enrollLoading, error: enrollError } = useCourseStore();
+  const navigate = useNavigate();
+  const isFree = !course.price || course.price === 0;
+  const isAlreadyEnrolled = enrolledCourseIds?.includes(course.id);
+  const loading = cartLoading || enrollLoading;
+
+  const handleEnrollFree = async () => {
+    const success = await enrollFree(course.id);
+    if (success) {
+      navigate('/dashboard/learning');
+    }
+  };
+
   return (
     <div className="group bg-surface-container-lowest flex flex-col rounded-3xl overflow-hidden shadow-sm hover:shadow-xl transition-all duration-300 border border-surface-dim hover:-translate-y-1 h-full">
       {isAdmin ? (
@@ -56,24 +69,70 @@ const CourseCard = ({ course, isAdmin, onTogglePublish }) => {
                 <RouterLink to={`/dashboard/courses/builder/${course.id}`} className="flex-1 text-center py-2 px-3 rounded-xl border border-surface-dim text-sm font-bold text-on-surface-variant hover:bg-surface-container-low transition-colors">
                   Edit
                 </RouterLink>
-                <button 
+                <button
                   onClick={() => onTogglePublish(course)}
                   className={`flex-1 py-2 px-3 rounded-xl text-sm font-bold transition-colors ${course.is_published ? 'bg-amber-100 text-amber-800 hover:bg-amber-200' : 'bg-emerald-100 text-emerald-800 hover:bg-emerald-200'}`}>
                   {course.is_published ? 'Unpublish' : 'Publish'}
                 </button>
               </div>
-              <RouterLink to={`/dashboard/learning/${course.id}`} className="w-full text-center py-2 px-3 rounded-xl bg-primary-container text-on-primary-container text-sm font-bold hover:bg-primary hover:text-white transition-colors">
-                Preview Course
-              </RouterLink>
+              <div className="flex items-center gap-2">
+                <RouterLink to={`/dashboard/learning/${course.id}`} className="flex-1 text-center py-2 px-3 rounded-xl bg-primary-container text-on-primary-container text-sm font-bold hover:bg-primary hover:text-white transition-colors">
+                  Preview Course
+                </RouterLink>
+                <button
+                  onClick={() => onDelete(course)}
+                  className="py-2 px-3 rounded-xl bg-red-100 text-red-700 text-sm font-bold hover:bg-red-200 transition-colors flex items-center gap-1"
+                >
+                  <span className="material-symbols-outlined text-[16px]">delete</span>
+                  Delete
+                </button>
+              </div>
             </div>
           ) : (
-            <div className="flex gap-2 w-full">
-              <button onClick={() => addToCart('course', course.id)} disabled={loading} className="w-full text-center py-2.5 rounded-xl bg-primary-container text-primary font-bold hover:bg-primary hover:text-white transition-colors text-sm font-headline shadow-sm">
-                Add to Cart
-              </button>
-              <RouterLink to={`/dashboard/learning/${course.id}`} className="w-full text-center py-2.5 rounded-xl bg-primary text-white text-sm font-bold hover:bg-on-primary-fixed-variant transition-colors font-headline shadow-sm">
-                View
-              </RouterLink>
+            <div className="flex flex-col gap-2 w-full">
+              {enrollError && (
+                <p className="text-xs text-error text-center">{enrollError}</p>
+              )}
+              <div className="flex gap-2 w-full">
+                {isFree ? (
+                  isAlreadyEnrolled ? (
+                    <RouterLink
+                      to={`/dashboard/learning/${course.id}`}
+                      className="w-full text-center py-2.5 rounded-xl bg-emerald-100 text-emerald-800 text-sm font-bold transition-colors font-headline shadow-sm flex items-center justify-center gap-1.5"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">check_circle</span>
+                      Go to Course
+                    </RouterLink>
+                  ) : (
+                    <button
+                      onClick={handleEnrollFree}
+                      disabled={loading}
+                      className="w-full text-center py-2.5 rounded-xl bg-emerald-600 text-white font-bold hover:bg-emerald-700 transition-colors text-sm font-headline shadow-sm disabled:opacity-50 flex items-center justify-center gap-1.5"
+                    >
+                      {loading ? (
+                        <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                      ) : (
+                        <span className="material-symbols-outlined text-[16px]">school</span>
+                      )}
+                      Enroll Now — Free
+                    </button>
+                  )
+                ) : (
+                  <button
+                    onClick={() => addToCart('course', course.id)}
+                    disabled={loading}
+                    className="w-full text-center py-2.5 rounded-xl bg-primary-container text-primary font-bold hover:bg-primary hover:text-white transition-colors text-sm font-headline shadow-sm"
+                  >
+                    Add to Cart
+                  </button>
+                )}
+                <RouterLink
+                  to={`/dashboard/learning/${course.id}`}
+                  className="flex-shrink-0 py-2.5 px-3 rounded-xl bg-primary text-white text-sm font-bold hover:bg-on-primary-fixed-variant transition-colors font-headline shadow-sm flex items-center justify-center"
+                >
+                  View
+                </RouterLink>
+              </div>
             </div>
           )}
         </div>
@@ -86,13 +145,23 @@ const Courses = () => {
   const navigate = useNavigate();
   const { user } = useAuthStore();
   const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
-  const { courses, fetchCourses, createCourse, loading, error } = useCourseStore();
+  const { courses, fetchCourses, fetchMyLearningCourses, myEnrollments, createCourse, deleteCourse, loading, error } = useCourseStore();
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [formData, setFormData] = useState({ title: '', description: '', price: 0, currency: 'INR', validity_days: '', instructor_name: '', instructor_bio: '' });
   const [formError, setFormError] = useState('');
+  const [deleteConfirm, setDeleteConfirm] = useState(null); // course object to delete
+  const [deleting, setDeleting] = useState(false);
 
-  useEffect(() => { fetchCourses(); }, [fetchCourses]);
+  // Collect enrolled course IDs for non-admin users so we can show "Go to Course" instead of "Enroll"
+  const enrolledCourseIds = !isAdmin
+    ? (myEnrollments || []).map((e) => e.course_id)
+    : [];
+
+  useEffect(() => {
+    fetchCourses();
+    if (!isAdmin) fetchMyLearningCourses();
+  }, [fetchCourses, fetchMyLearningCourses, isAdmin]);
 
   const handleClose = () => {
     setOpen(false);
@@ -123,6 +192,17 @@ const Courses = () => {
 
   const handleTogglePublish = async (course) => {
     await useCourseStore.getState().updateCourse(course.id, { ...course, is_published: !course.is_published });
+  };
+
+  const handleDeleteCourse = async () => {
+    if (!deleteConfirm) return;
+    setDeleting(true);
+    const success = await deleteCourse(deleteConfirm.id);
+    setDeleting(false);
+    setDeleteConfirm(null);
+    if (!success) {
+      setFormError(useCourseStore.getState().error || 'Failed to delete course.');
+    }
   };
 
   const filtered = courses.filter((c) =>
@@ -187,7 +267,7 @@ const Courses = () => {
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
         {filtered.map((course) => (
-          <CourseCard key={course.id} course={course} isAdmin={isAdmin} onTogglePublish={handleTogglePublish} />
+          <CourseCard key={course.id} course={course} isAdmin={isAdmin} onTogglePublish={handleTogglePublish} onDelete={(c) => setDeleteConfirm(c)} enrolledCourseIds={enrolledCourseIds} />
         ))}
       </div>
 
@@ -269,6 +349,43 @@ const Courses = () => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deleteConfirm && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center px-4 bg-on-surface/40 backdrop-blur-sm transition-opacity">
+          <div className="bg-surface-container-lowest rounded-3xl p-8 w-full max-w-sm shadow-2xl animate-[fadeInUp_0.3s_ease-out] border border-surface-dim">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-2 rounded-full bg-red-100">
+                <span className="material-symbols-outlined text-red-600 text-2xl">warning</span>
+              </div>
+              <h2 className="text-xl font-extrabold font-headline text-red-700">Delete Course</h2>
+            </div>
+            <p className="text-on-surface-variant font-body text-sm mb-2">
+              Are you sure you want to permanently delete <strong className="text-on-surface">{deleteConfirm.title}</strong>?
+            </p>
+            <p className="text-red-600 text-xs font-body mb-6">
+              This will remove all associated videos, documents, and data. This action cannot be undone.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => setDeleteConfirm(null)}
+                disabled={deleting}
+                className="px-5 py-2.5 font-bold font-headline text-on-surface-variant hover:bg-surface-container-low rounded-xl transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteCourse}
+                disabled={deleting}
+                className="px-6 py-2.5 bg-red-600 text-white font-bold font-headline rounded-xl hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center gap-2 shadow-md"
+              >
+                {deleting && <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>}
+                Delete Forever
+              </button>
+            </div>
           </div>
         </div>
       )}

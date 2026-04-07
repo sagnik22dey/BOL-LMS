@@ -240,6 +240,18 @@ func migrate() {
 
 	ALTER TABLE courses ADD COLUMN IF NOT EXISTS instructor_name TEXT NOT NULL DEFAULT '';
 	ALTER TABLE courses ADD COLUMN IF NOT EXISTS instructor_bio TEXT NOT NULL DEFAULT '';
+
+	-- Course deletion audit log
+	CREATE TABLE IF NOT EXISTS course_delete_logs (
+		id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		course_id UUID NOT NULL,
+		course_title TEXT NOT NULL,
+		organization_id UUID NOT NULL,
+		deleted_by UUID NOT NULL REFERENCES users(id),
+		deleted_by_name TEXT NOT NULL DEFAULT '',
+		deleted_by_email TEXT NOT NULL DEFAULT '',
+		deleted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	);
 	`
 	if _, err := Pool.Exec(context.Background(), alterSchema); err != nil {
 		log.Fatalf("Alter schema failed: %v", err)

@@ -25,6 +25,10 @@ type Config struct {
 	MinioUseSSL     bool
 	MinioBucketVids string
 	MinioBucketDocs string
+	// MinioBucketLMS is the single unified bucket for the hierarchical
+	// org/course storage architecture.  All org-scoped content (videos, docs,
+	// assignments) is stored under prefixes inside this bucket.
+	MinioBucketLMS string
 }
 
 var App Config
@@ -56,6 +60,7 @@ func Load() {
 		MinioUseSSL:     useSSL,
 		MinioBucketVids: getEnv("MINIO_BUCKET_VIDEOS", "bol-lms-videos"),
 		MinioBucketDocs: getEnv("MINIO_BUCKET_DOCS", "bol-lms-documents"),
+		MinioBucketLMS:  getEnv("MINIO_BUCKET_LMS", "bol-lms"),
 	}
 }
 

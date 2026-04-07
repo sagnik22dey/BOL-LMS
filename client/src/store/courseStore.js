@@ -8,6 +8,7 @@ export const useCourseStore = create((set, get) => ({
   currentCourse: null,
   loading: false,
   error: null,
+  enrollSuccess: null,
 
   fetchCourses: async () => {
     set({ loading: true, error: null });
@@ -23,13 +24,25 @@ export const useCourseStore = create((set, get) => ({
     set({ loading: true, error: null });
     try {
       const response = await api.get('/api/learning/my-courses');
-      set({ 
-        myLearningCourses: response.data?.courses || [], 
+      set({
+        myLearningCourses: response.data?.courses || [],
         myEnrollments: response.data?.enrollments || [],
-        loading: false 
+        loading: false
       });
     } catch (error) {
       set({ error: error.response?.data?.error || 'Failed to fetch my learning courses', loading: false });
+    }
+  },
+
+  enrollFree: async (courseId) => {
+    set({ loading: true, error: null, enrollSuccess: null });
+    try {
+      await api.post('/api/learning/enroll', { course_id: courseId });
+      set({ enrollSuccess: courseId, loading: false });
+      return true;
+    } catch (error) {
+      set({ error: error.response?.data?.error || 'Failed to enroll in course', loading: false });
+      return false;
     }
   },
 
@@ -67,6 +80,44 @@ export const useCourseStore = create((set, get) => ({
     } catch (error) {
       set({ error: error.response?.data?.error || 'Failed to update course', loading: false });
       return false;
+    }
+  },
+
+  deleteCourse: async (id) => {
+    set({ loading: true, error: null });
+    try {
+      await api.delete(`/api/courses/${id}`);
+      set(state => ({
+        courses: state.courses.filter(c => c.id !== id),
+        loading: false
+      }));
+      return true;
+    } catch (error) {
+      set({ error: error.response?.data?.error || 'Failed to delete course', loading: false });
+      return false;
+    }
+  },
+
+  deleteCourseContent: async (courseId, objectKey) => {
+    set({ loading: true, error: null });
+    try {
+      await api.delete(`/api/courses/${courseId}/content?object_key=${encodeURIComponent(objectKey)}`);
+      set({ loading: false });
+      return true;
+    } catch (error) {
+      set({ error: error.response?.data?.error || 'Failed to delete content', loading: false });
+      return false;
+    }
+  },
+
+  courseDeleteLogs: [],
+  fetchCourseDeleteLogs: async (isSuperAdmin = false) => {
+    try {
+      const endpoint = isSuperAdmin ? '/api/admin/super/course-delete-logs' : '/api/admin/course-delete-logs';
+      const response = await api.get(endpoint);
+      set({ courseDeleteLogs: response.data || [] });
+    } catch (error) {
+      console.error('Failed to fetch course delete logs:', error);
     }
   },
 }));

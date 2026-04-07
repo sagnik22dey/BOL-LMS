@@ -2,11 +2,13 @@ package handlers
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"time"
 
 	"bol-lms-server/internal/db"
 	"bol-lms-server/internal/models"
+	"bol-lms-server/internal/storage"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -46,6 +48,18 @@ func CreateOrganization(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not create organization"})
 		return
 	}
+
+	// Initialise the hierarchical storage directories for this new org.
+	if initErr := storage.InitOrgHierarchy(ctx, org.Slug); initErr != nil {
+		log.Printf("[org] WARNING: could not init MinIO hierarchy for org %q: %v", org.Slug, initErr)
+		// Non-fatal: the org is created in DB; storage dirs can be retried.
+	} else {
+		// Set public-read policy for the org's public/ prefix.
+		if policyErr := storage.SetPublicReadPolicyForOrg(ctx, org.Slug); policyErr != nil {
+			log.Printf("[org] WARNING: could not set public read policy for org %q: %v", org.Slug, policyErr)
+		}
+	}
+
 	c.JSON(http.StatusCreated, org)
 }
 

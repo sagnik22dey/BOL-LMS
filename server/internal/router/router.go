@@ -84,6 +84,7 @@ func Setup() *gin.Engine {
 	superAdmin.Use(middleware.AuthRequired(), middleware.RequireRole(models.RoleSuperAdmin))
 	{
 		superAdmin.GET("/analytics", handlers.GetSuperAdminAnalytics)
+		superAdmin.GET("/course-delete-logs", handlers.GetCourseDeleteLogs)
 		superAdmin.POST("/organizations", handlers.CreateOrganization)
 		superAdmin.GET("/organizations", handlers.ListOrganizations)
 		superAdmin.PUT("/organizations/:id", handlers.UpdateOrganization)
@@ -103,6 +104,7 @@ func Setup() *gin.Engine {
 		admin.GET("/users", handlers.GetOrganizationUsers)
 		admin.GET("/users/eligible", handlers.GetAdminEligibleUsers)
 		admin.POST("/organizations/assign-users", handlers.AdminBulkAssignUsersToOrg)
+		admin.GET("/course-delete-logs", handlers.GetCourseDeleteLogs)
 
 		// Course Bundle management
 		admin.POST("/course-bundles", handlers.CreateCourseBundle)
@@ -144,6 +146,7 @@ func Setup() *gin.Engine {
 			adminCourses.POST("", handlers.CreateCourse)
 			adminCourses.PUT("/:id", handlers.UpdateCourse)
 			adminCourses.DELETE("/:id", handlers.DeleteCourse)
+			adminCourses.DELETE("/:id/content", handlers.DeleteCourseContent)
 			adminCourses.POST("/:id/modules/:moduleId/quizzes", handlers.CreateQuiz)
 			adminCourses.PUT("/:id/modules/:moduleId/quizzes/:quizId", handlers.UpdateQuiz)
 			adminCourses.GET("/:id/modules/:moduleId/quizzes/:quizId/submissions", handlers.ListSubmissions)
@@ -154,6 +157,10 @@ func Setup() *gin.Engine {
 			adminCourses.PATCH("/:id/modules/:moduleId/submissions/:submissionId/grade", handlers.GradeSubmission)
 			// SEC-003: presign for file uploads is admin-only
 			adminCourses.POST("/presign", handlers.GeneratePresignURL)
+			// Hierarchical presign for the unified LMS bucket (admin-only: videos & docs)
+			adminCourses.POST("/h-presign", handlers.GenerateHierarchicalPresignPut)
+			// List content in a course's storage directories
+			adminCourses.GET("/:id/content", handlers.ListCourseContent)
 		}
 
 		// Comment routes
@@ -168,6 +175,11 @@ func Setup() *gin.Engine {
 		// SEC-004: Students may upload assignment files only to the documents bucket.
 		// This is a restricted presign-put for enrolled users uploading assignment submissions.
 		studentCourses.POST("/presign-put", handlers.GenerateStudentPresignURL)
+		// Hierarchical presign endpoints for the unified LMS bucket
+		studentCourses.GET("/h-presign-get", handlers.GenerateHierarchicalPresignGet)
+		studentCourses.POST("/h-presign-put", handlers.GenerateStudentHierarchicalPresignPut)
+		// List the authenticated student's own assignment files for a course
+		studentCourses.GET("/courses/:id/my-assignments", handlers.ListMyAssignmentFiles)
 		studentCourses.POST("/enroll", handlers.EnrollUser)
 		studentCourses.GET("/my-courses", handlers.ListMyEnrollments)
 	}

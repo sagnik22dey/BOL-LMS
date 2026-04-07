@@ -12,13 +12,27 @@ import (
 	"github.com/google/uuid"
 )
 
+type CourseAssignmentSummary struct {
+	CourseID    uuid.UUID `json:"course_id"`
+	CourseTitle string    `json:"course_title"`
+	AssignedAt  time.Time `json:"assigned_at"`
+	Progress    float64   `json:"progress"`
+	IsEnrolled  bool      `json:"is_enrolled"`
+	Source      string    `json:"source"` // "assignment" or "enrollment"
+}
+
+type AnalyticsUserWithCourses struct {
+	models.User
+	AssignedCourses []CourseAssignmentSummary `json:"assigned_courses"`
+}
+
 type AnalyticsOrganization struct {
-	ID        uuid.UUID    `json:"id"`
-	Name      string       `json:"name"`
-	Slug      string       `json:"slug"`
-	CreatedAt time.Time    `json:"created_at"`
-	Admins    []models.User `json:"admins"`
-	Users     []models.User `json:"users"`
+	ID        uuid.UUID                  `json:"id"`
+	Name      string                     `json:"name"`
+	Slug      string                     `json:"slug"`
+	CreatedAt time.Time                  `json:"created_at"`
+	Admins    []models.User              `json:"admins"`
+	Users     []AnalyticsUserWithCourses `json:"users"`
 }
 
 type SuperAdminAnalyticsResponse struct {
@@ -69,7 +83,13 @@ func GetSuperAdminAnalytics(c *gin.Context) {
 	defer userRows.Close()
 
 	adminMap := make(map[uuid.UUID][]models.User)
-	userMap := make(map[uuid.UUID][]models.User)
+	userMap := make(map[uuid.UUID][]AnalyticsUserWithCourses)
+	// index: userID -> (orgID, slice index) for quick lookups
+	userIndex := make(map[uuid.UUID]struct {
+		orgID uuid.UUID
+		idx   int
+	})
+
 	for userRows.Next() {
 		u, err := scanUser(userRows)
 		if err != nil || u.OrganizationID == nil {
@@ -78,7 +98,106 @@ func GetSuperAdminAnalytics(c *gin.Context) {
 		if u.Role == models.RoleAdmin {
 			adminMap[*u.OrganizationID] = append(adminMap[*u.OrganizationID], u)
 		} else {
-			userMap[*u.OrganizationID] = append(userMap[*u.OrganizationID], u)
+			idx := len(userMap[*u.OrganizationID])
+			userMap[*u.OrganizationID] = append(userMap[*u.OrganizationID], AnalyticsUserWithCourses{
+				User:            u,
+				AssignedCourses: []CourseAssignmentSummary{},
+			})
+			userIndex[u.ID] = struct {
+				orgID uuid.UUID
+				idx   int
+			}{orgID: *u.OrganizationID, idx: idx}
+		}
+	}
+
+	// Collect all regular user IDs for batch queries
+	allUserIDs := make([]uuid.UUID, 0, len(userIndex))
+	for uid := range userIndex {
+		allUserIDs = append(allUserIDs, uid)
+	}
+
+	if len(allUserIDs) > 0 {
+		// Tracks (userID:courseID) pairs already added to prevent duplicates
+		seenPairs := make(map[string]bool)
+
+		// 1. Fetch admin-assigned courses (user_course_assignments)
+		assignRows, err := db.Pool.Query(ctx, `
+			SELECT uca.user_id, uca.course_id, c.title, uca.assigned_at,
+			       COALESCE(e.progress, 0) AS progress,
+			       (e.id IS NOT NULL) AS is_enrolled
+			FROM user_course_assignments uca
+			JOIN courses c ON c.id = uca.course_id
+			LEFT JOIN enrollments e ON e.user_id = uca.user_id AND e.course_id = uca.course_id
+			WHERE uca.user_id = ANY($1)`, allUserIDs)
+		if err == nil {
+			defer assignRows.Close()
+			for assignRows.Next() {
+				var userID, courseID uuid.UUID
+				var title string
+				var assignedAt time.Time
+				var progress float64
+				var isEnrolled bool
+				if err := assignRows.Scan(&userID, &courseID, &title, &assignedAt, &progress, &isEnrolled); err != nil {
+					continue
+				}
+				key := userID.String() + ":" + courseID.String()
+				if seenPairs[key] {
+					continue
+				}
+				seenPairs[key] = true
+				info := userIndex[userID]
+				userMap[info.orgID][info.idx].AssignedCourses = append(
+					userMap[info.orgID][info.idx].AssignedCourses,
+					CourseAssignmentSummary{
+						CourseID:    courseID,
+						CourseTitle: title,
+						AssignedAt:  assignedAt,
+						Progress:    progress,
+						IsEnrolled:  isEnrolled,
+						Source:      "assignment",
+					},
+				)
+			}
+		}
+
+		// 2. Fetch direct enrollments (e.g. free courses enrolled without admin assignment)
+		enrollRows, err := db.Pool.Query(ctx, `
+			SELECT e.user_id, e.course_id, c.title, e.created_at, e.progress
+			FROM enrollments e
+			JOIN courses c ON c.id = e.course_id
+			WHERE e.user_id = ANY($1)`, allUserIDs)
+		if err == nil {
+			defer enrollRows.Close()
+			for enrollRows.Next() {
+				var userID, courseID uuid.UUID
+				var title string
+				var enrolledAt time.Time
+				var progress float64
+				if err := enrollRows.Scan(&userID, &courseID, &title, &enrolledAt, &progress); err != nil {
+					continue
+				}
+				key := userID.String() + ":" + courseID.String()
+				if seenPairs[key] {
+					// Already listed via assignment — skip to avoid duplicate
+					continue
+				}
+				seenPairs[key] = true
+				info, ok := userIndex[userID]
+				if !ok {
+					continue
+				}
+				userMap[info.orgID][info.idx].AssignedCourses = append(
+					userMap[info.orgID][info.idx].AssignedCourses,
+					CourseAssignmentSummary{
+						CourseID:    courseID,
+						CourseTitle: title,
+						AssignedAt:  enrolledAt,
+						Progress:    progress,
+						IsEnrolled:  true,
+						Source:      "enrollment",
+					},
+				)
+			}
 		}
 	}
 
@@ -90,7 +209,7 @@ func GetSuperAdminAnalytics(c *gin.Context) {
 		}
 		users := userMap[o.id]
 		if users == nil {
-			users = []models.User{}
+			users = []AnalyticsUserWithCourses{}
 		}
 		response.Organizations = append(response.Organizations, AnalyticsOrganization{
 			ID:        o.id,

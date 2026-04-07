@@ -81,7 +81,7 @@ const SortableModule = ({ mod, onDelete, onAddMaterial, onDeleteMaterial, onEdit
 const CourseBuilder = () => {
   const { courseId } = useParams();
   const navigate = useNavigate();
-  const { currentCourse, fetchCourseById, updateCourse, loading, error } = useCourseStore();
+  const { currentCourse, fetchCourseById, updateCourse, deleteCourseContent, loading, error } = useCourseStore();
   
   const [courseData, setCourseData] = useState({
     title: '',
@@ -241,6 +241,27 @@ const CourseBuilder = () => {
         setSnackbar({ open: true, message: 'Course saved successfully!', severity: 'success' });
     } else {
         setSnackbar({ open: true, message: 'Failed to save course.', severity: 'error' });
+    }
+  };
+
+  const [deletingFile, setDeletingFile] = useState(false);
+
+  const handleDeleteFile = async () => {
+    if (!editingMaterial?.file_key || !courseId) return;
+    setDeletingFile(true);
+    try {
+      const success = await deleteCourseContent(courseId, editingMaterial.file_key);
+      if (success) {
+        setEditingMaterial({ ...editingMaterial, file_key: '' });
+        setSnackbar({ open: true, message: 'File deleted successfully! You can now upload a replacement.', severity: 'success' });
+      } else {
+        setSnackbar({ open: true, message: 'Failed to delete file from storage.', severity: 'error' });
+      }
+    } catch (err) {
+      console.error('Delete file failed:', err);
+      setSnackbar({ open: true, message: 'Failed to delete file.', severity: 'error' });
+    } finally {
+      setDeletingFile(false);
     }
   };
 
@@ -442,19 +463,33 @@ const CourseBuilder = () => {
               
               {editingMaterial.type === 'video' && (
                 <Box>
-                  <TextField 
-                    label="YouTube URL / Video Key" 
-                    fullWidth 
-                    value={editingMaterial.file_key || ''} 
-                    onChange={(e) => setEditingMaterial({ ...editingMaterial, file_key: e.target.value })} 
+                  <TextField
+                    label="YouTube URL / Video Key"
+                    fullWidth
+                    value={editingMaterial.file_key || ''}
+                    onChange={(e) => setEditingMaterial({ ...editingMaterial, file_key: e.target.value })}
                     helperText="Paste YouTube Video URL or enter MinIO storage key"
                     sx={{ mb: 2 }}
                   />
-                  <Button variant="outlined" component="label" size="small" disabled={uploadingFile} sx={{ minWidth: 200 }}>
-                    {uploadingFile ? <CircularProgress size={20} sx={{ mr: 1 }} /> : <AddIcon sx={{ mr: 1 }} />}
-                    {uploadingFile ? `Uploading ${uploadProgress}% (${uploadTimeLeft})` : 'Upload Custom Video'}
-                    <input type="file" hidden accept="video/*" onChange={(e) => handleFileUpload(e.target.files[0], 'video')} />
-                  </Button>
+                  <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                    <Button variant="outlined" component="label" size="small" disabled={uploadingFile} sx={{ minWidth: 200 }}>
+                      {uploadingFile ? <CircularProgress size={20} sx={{ mr: 1 }} /> : <AddIcon sx={{ mr: 1 }} />}
+                      {uploadingFile ? `Uploading ${uploadProgress}% (${uploadTimeLeft})` : (editingMaterial.file_key ? 'Replace Video' : 'Upload Custom Video')}
+                      <input type="file" hidden accept="video/*" onChange={(e) => handleFileUpload(e.target.files[0], 'video')} />
+                    </Button>
+                    {editingMaterial.file_key && !editingMaterial.file_key.startsWith('http') && (
+                      <Button
+                        variant="outlined"
+                        color="error"
+                        size="small"
+                        startIcon={deletingFile ? <CircularProgress size={16} /> : <DeleteIcon />}
+                        onClick={handleDeleteFile}
+                        disabled={deletingFile || uploadingFile}
+                      >
+                        {deletingFile ? 'Deleting...' : 'Delete Video'}
+                      </Button>
+                    )}
+                  </Box>
                 </Box>
               )}
 
@@ -495,20 +530,20 @@ const CourseBuilder = () => {
 
               {editingMaterial.type !== 'video' && editingMaterial.type !== 'text' && editingMaterial.type !== 'quiz' && editingMaterial.type !== 'assignment' && (
                 <Box>
-                   <TextField 
-                      label="File Key" 
-                      fullWidth 
-                      value={editingMaterial.file_key || ''} 
-                      onChange={(e) => setEditingMaterial({ ...editingMaterial, file_key: e.target.value })} 
+                   <TextField
+                      label="File Key"
+                      fullWidth
+                      value={editingMaterial.file_key || ''}
+                      onChange={(e) => setEditingMaterial({ ...editingMaterial, file_key: e.target.value })}
                       helperText="Specify the storage key for this file"
                    />
-                   <Box sx={{ mt: 2 }}>
+                   <Box sx={{ mt: 2, display: 'flex', gap: 1, alignItems: 'center' }}>
                      <Button variant="outlined" component="label" size="small" disabled={uploadingFile} sx={{ minWidth: 200 }}>
                         {uploadingFile ? <CircularProgress size={20} sx={{ mr: 1 }} /> : <AddIcon sx={{ mr: 1 }} />}
                         {uploadingFile ? `Uploading ${uploadProgress}% (${uploadTimeLeft})` : (editingMaterial.file_key ? 'Replace File' : 'Upload File')}
-                        <input 
-                          type="file" 
-                          hidden 
+                        <input
+                          type="file"
+                          hidden
                           accept={{
                             video: 'video/*',
                             pdf: '.pdf',
@@ -518,9 +553,21 @@ const CourseBuilder = () => {
                             image: 'image/*',
                             document: '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,image/*'
                           }[editingMaterial.type] || '*'}
-                          onChange={(e) => handleFileUpload(e.target.files[0], editingMaterial.type)} 
+                          onChange={(e) => handleFileUpload(e.target.files[0], editingMaterial.type)}
                         />
                      </Button>
+                     {editingMaterial.file_key && (
+                       <Button
+                         variant="outlined"
+                         color="error"
+                         size="small"
+                         startIcon={deletingFile ? <CircularProgress size={16} /> : <DeleteIcon />}
+                         onClick={handleDeleteFile}
+                         disabled={deletingFile || uploadingFile}
+                       >
+                         {deletingFile ? 'Deleting...' : 'Delete File'}
+                       </Button>
+                     )}
                    </Box>
                 </Box>
               )}

@@ -45,6 +45,9 @@ func Connect() {
 
 	ensureBucket(config.App.MinioBucketVids)
 	ensureBucket(config.App.MinioBucketDocs)
+
+	// Initialise the unified hierarchical LMS bucket.
+	InitLMSBucket()
 }
 
 func ensureBucket(name string) {

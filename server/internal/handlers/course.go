@@ -88,6 +88,18 @@ func CreateCourse(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not create course"})
 		return
 	}
+
+	// Initialise the hierarchical storage directories for this course.
+	// Look up the org slug for building the prefix.
+	var orgSlug string
+	_ = db.Pool.QueryRow(ctx, `SELECT slug FROM organizations WHERE id=$1`, orgID).Scan(&orgSlug)
+	if orgSlug != "" {
+		vis := storage.VisibilityFromBool(course.IsPublic)
+		if initErr := storage.InitCourseHierarchy(ctx, orgSlug, vis, course.ID.String()); initErr != nil {
+			log.Printf("[course] WARNING: could not init MinIO hierarchy for course %s: %v", course.ID, initErr)
+		}
+	}
+
 	c.JSON(http.StatusCreated, course)
 }
 
@@ -313,7 +325,8 @@ func UpdateCourse(c *gin.Context) {
 	defer cancel()
 
 	var ownerOrgID uuid.UUID
-	if err := db.Pool.QueryRow(ctx, `SELECT organization_id FROM courses WHERE id=$1`, id).Scan(&ownerOrgID); err != nil {
+	var oldIsPublic bool
+	if err := db.Pool.QueryRow(ctx, `SELECT organization_id, is_public FROM courses WHERE id=$1`, id).Scan(&ownerOrgID, &oldIsPublic); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "course not found"})
 		return
 	}
@@ -354,6 +367,20 @@ func UpdateCourse(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not update course"})
 		return
 	}
+
+	// If visibility changed, move storage objects between private/ and public/.
+	if oldIsPublic != course.IsPublic {
+		var orgSlug string
+		_ = db.Pool.QueryRow(ctx, `SELECT slug FROM organizations WHERE id=$1`, callerOrgID).Scan(&orgSlug)
+		if orgSlug != "" {
+			from := storage.VisibilityFromBool(oldIsPublic)
+			to := storage.VisibilityFromBool(course.IsPublic)
+			if moveErr := storage.MoveCourseVisibility(ctx, orgSlug, id.String(), from, to); moveErr != nil {
+				log.Printf("[course] WARNING: could not move course %s storage from %s to %s: %v", id, from, to, moveErr)
+			}
+		}
+	}
+
 	c.JSON(http.StatusOK, course)
 }
 
@@ -372,11 +399,19 @@ func DeleteCourse(c *gin.Context) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	callerUserID, err := uuid.Parse(c.GetString("user_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user context"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	var ownerOrgID uuid.UUID
-	if err := db.Pool.QueryRow(ctx, `SELECT organization_id FROM courses WHERE id=$1`, id).Scan(&ownerOrgID); err != nil {
+	var courseIsPublic bool
+	var courseTitle string
+	if err := db.Pool.QueryRow(ctx, `SELECT organization_id, is_public, title FROM courses WHERE id=$1`, id).Scan(&ownerOrgID, &courseIsPublic, &courseTitle); err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "course not found"})
 		return
 	}
@@ -385,9 +420,142 @@ func DeleteCourse(c *gin.Context) {
 		return
 	}
 
+	// Fetch caller name/email for audit log
+	var callerName, callerEmail string
+	_ = db.Pool.QueryRow(ctx, `SELECT name, email FROM users WHERE id=$1`, callerUserID).Scan(&callerName, &callerEmail)
+
+	// Insert deletion audit log BEFORE deleting the course
+	logID := uuid.New()
+	_, logErr := db.Pool.Exec(ctx,
+		`INSERT INTO course_delete_logs (id, course_id, course_title, organization_id, deleted_by, deleted_by_name, deleted_by_email, deleted_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		logID, id, courseTitle, ownerOrgID, callerUserID, callerName, callerEmail, time.Now(),
+	)
+	if logErr != nil {
+		log.Printf("[course] WARNING: could not write delete log for course %s: %v", id, logErr)
+	}
+
 	if _, err := db.Pool.Exec(ctx, `DELETE FROM courses WHERE id = $1`, id); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not delete course"})
 		return
 	}
+
+	// Clean up all storage objects for this course.
+	var orgSlug string
+	_ = db.Pool.QueryRow(ctx, `SELECT slug FROM organizations WHERE id=$1`, callerOrgID).Scan(&orgSlug)
+	if orgSlug != "" {
+		vis := storage.VisibilityFromBool(courseIsPublic)
+		prefix := storage.CoursePrefix(orgSlug, vis, id.String())
+		if delErr := storage.DeletePrefix(ctx, prefix); delErr != nil {
+			log.Printf("[course] WARNING: could not clean up storage for deleted course %s: %v", id, delErr)
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{"message": "course deleted"})
+}
+
+// DeleteCourseContent deletes a single object (video/document) from a course's
+// storage in MinIO. The admin can then re-upload a replacement.
+//
+// DELETE /api/courses/:id/content?object_key=...
+func DeleteCourseContent(c *gin.Context) {
+	courseID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid course id"})
+		return
+	}
+
+	objectKey := c.Query("object_key")
+	if objectKey == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "object_key query parameter is required"})
+		return
+	}
+
+	callerOrgID, err := uuid.Parse(c.GetString("org_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid org context"})
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Verify ownership
+	orgSlug, visibility, err := resolveCourseMeta(ctx, courseID, callerOrgID)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Safety check: ensure the object_key starts with this course's prefix
+	coursePrefix := storage.CoursePrefix(orgSlug, visibility, courseID.String())
+	if len(objectKey) < len(coursePrefix) || objectKey[:len(coursePrefix)] != coursePrefix {
+		c.JSON(http.StatusForbidden, gin.H{"error": "object does not belong to this course"})
+		return
+	}
+
+	if err := storage.DeleteObject(ctx, objectKey); err != nil {
+		log.Printf("[course-content] delete error for %q: %v", objectKey, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not delete object"})
+		return
+	}
+
+	log.Printf("[course-content] deleted object %q from course %s", objectKey, courseID)
+	c.JSON(http.StatusOK, gin.H{"message": "content deleted", "object_key": objectKey})
+}
+
+// GetCourseDeleteLogs returns the deletion audit log for courses within an
+// organization. Admins see logs for their own org; super_admins see all.
+//
+// GET /api/admin/course-delete-logs
+func GetCourseDeleteLogs(c *gin.Context) {
+	role := c.GetString("role")
+	orgIDStr := c.GetString("org_id")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var rows interface {
+		Close()
+		Next() bool
+		Scan(...any) error
+	}
+	var queryErr error
+
+	if role == string(models.RoleSuperAdmin) {
+		rows, queryErr = db.Pool.Query(ctx,
+			`SELECT cdl.id, cdl.course_id, cdl.course_title, cdl.organization_id, cdl.deleted_by, cdl.deleted_by_name, cdl.deleted_by_email, cdl.deleted_at
+			 FROM course_delete_logs cdl
+			 ORDER BY cdl.deleted_at DESC
+			 LIMIT 200`)
+	} else {
+		orgID, err := uuid.Parse(orgIDStr)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid org context"})
+			return
+		}
+		rows, queryErr = db.Pool.Query(ctx,
+			`SELECT cdl.id, cdl.course_id, cdl.course_title, cdl.organization_id, cdl.deleted_by, cdl.deleted_by_name, cdl.deleted_by_email, cdl.deleted_at
+			 FROM course_delete_logs cdl
+			 WHERE cdl.organization_id = $1
+			 ORDER BY cdl.deleted_at DESC
+			 LIMIT 200`, orgID)
+	}
+
+	if queryErr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not fetch delete logs"})
+		return
+	}
+	defer rows.Close()
+
+	logs := []models.CourseDeleteLog{}
+	for rows.Next() {
+		var l models.CourseDeleteLog
+		if err := rows.Scan(&l.ID, &l.CourseID, &l.CourseTitle, &l.OrganizationID, &l.DeletedBy, &l.DeletedByName, &l.DeletedByEmail, &l.DeletedAt); err != nil {
+			continue
+		}
+		logs = append(logs, l)
+	}
+
+	c.JSON(http.StatusOK, logs)
 }

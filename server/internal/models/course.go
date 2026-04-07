@@ -60,3 +60,15 @@ type PresignRequest struct {
 	ObjectName string `json:"object_name" binding:"required"`
 	ExpiryMins int    `json:"expiry_mins"`
 }
+
+// CourseDeleteLog stores an audit trail when a course is deleted.
+type CourseDeleteLog struct {
+	ID             uuid.UUID `json:"id"`
+	CourseID       uuid.UUID `json:"course_id"`
+	CourseTitle    string    `json:"course_title"`
+	OrganizationID uuid.UUID `json:"organization_id"`
+	DeletedBy      uuid.UUID `json:"deleted_by"`
+	DeletedByName  string    `json:"deleted_by_name"`
+	DeletedByEmail string    `json:"deleted_by_email"`
+	DeletedAt      time.Time `json:"deleted_at"`
+}
