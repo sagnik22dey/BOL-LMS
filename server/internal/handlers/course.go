@@ -189,17 +189,18 @@ func GetCourse(c *gin.Context) {
 			return
 		}
 
-		var enrollmentID string
-		errEnroll := db.Pool.QueryRow(ctx,
-			`SELECT id FROM enrollments WHERE user_id=$1 AND course_id=$2`,
-			userID, id).Scan(&enrollmentID)
+		// PERF: Combine the two existence checks into a single round trip.
+		var hasAccess bool
+		if err := db.Pool.QueryRow(ctx, `
+			SELECT EXISTS(
+			  SELECT 1 FROM enrollments WHERE user_id=$1 AND course_id=$2
+			  UNION ALL
+			  SELECT 1 FROM user_course_assignments WHERE user_id=$1 AND course_id=$2
+			)`, userID, id).Scan(&hasAccess); err != nil {
+			hasAccess = false
+		}
 
-		var assignmentID string
-		errAssign := db.Pool.QueryRow(ctx,
-			`SELECT id FROM user_course_assignments WHERE user_id=$1 AND course_id=$2`,
-			userID, id).Scan(&assignmentID)
-
-		if errEnroll != nil && errAssign != nil {
+		if !hasAccess {
 			course.IsEnrolled = false
 			course.Modules = []models.Module{}
 		} else {

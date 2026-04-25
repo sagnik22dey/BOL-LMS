@@ -257,5 +257,68 @@ func migrate() {
 		log.Fatalf("Alter schema failed: %v", err)
 	}
 
+	// PERF: Indexes on foreign-key / lookup columns. Without these, every
+	// list endpoint (courses, users, enrollments, cart, bundles, dashboard
+	// stats) does a full sequential scan and gets exponentially slower as
+	// the dataset grows. These are all idempotent.
+	indexes := `
+	CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+	CREATE INDEX IF NOT EXISTS idx_users_org_id ON users(organization_id);
+	CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
+
+	CREATE INDEX IF NOT EXISTS idx_courses_org_id ON courses(organization_id);
+	CREATE INDEX IF NOT EXISTS idx_courses_published_public ON courses(is_published, is_public);
+
+	CREATE INDEX IF NOT EXISTS idx_enrollments_user_id ON enrollments(user_id);
+	CREATE INDEX IF NOT EXISTS idx_enrollments_course_id ON enrollments(course_id);
+
+	CREATE INDEX IF NOT EXISTS idx_assignments_org_id ON assignments(organization_id);
+	CREATE INDEX IF NOT EXISTS idx_assignments_course_id ON assignments(course_id);
+	CREATE INDEX IF NOT EXISTS idx_assignments_module_id ON assignments(module_id);
+
+	CREATE INDEX IF NOT EXISTS idx_assignment_submissions_assignment_id ON assignment_submissions(assignment_id);
+	CREATE INDEX IF NOT EXISTS idx_assignment_submissions_user_id ON assignment_submissions(user_id);
+
+	CREATE INDEX IF NOT EXISTS idx_quizzes_course_id ON quizzes(course_id);
+	CREATE INDEX IF NOT EXISTS idx_quizzes_module_id ON quizzes(module_id);
+	CREATE INDEX IF NOT EXISTS idx_quizzes_org_id ON quizzes(organization_id);
+
+	CREATE INDEX IF NOT EXISTS idx_submissions_quiz_id ON submissions(quiz_id);
+	CREATE INDEX IF NOT EXISTS idx_submissions_user_id ON submissions(user_id);
+
+	CREATE INDEX IF NOT EXISTS idx_course_bundles_org_id ON course_bundles(organization_id);
+	CREATE INDEX IF NOT EXISTS idx_course_bundle_courses_bundle ON course_bundle_courses(bundle_id);
+	CREATE INDEX IF NOT EXISTS idx_course_bundle_courses_course ON course_bundle_courses(course_id);
+	CREATE INDEX IF NOT EXISTS idx_course_bundle_users_bundle ON course_bundle_users(bundle_id);
+	CREATE INDEX IF NOT EXISTS idx_course_bundle_users_user ON course_bundle_users(user_id);
+
+	CREATE INDEX IF NOT EXISTS idx_user_course_assignments_user ON user_course_assignments(user_id);
+	CREATE INDEX IF NOT EXISTS idx_user_course_assignments_course ON user_course_assignments(course_id);
+
+	CREATE INDEX IF NOT EXISTS idx_user_organizations_user ON user_organizations(user_id);
+	CREATE INDEX IF NOT EXISTS idx_user_organizations_org ON user_organizations(organization_id);
+
+	CREATE INDEX IF NOT EXISTS idx_organization_admins_org ON organization_admins(organization_id);
+	CREATE INDEX IF NOT EXISTS idx_organization_admins_user ON organization_admins(user_id);
+
+	CREATE INDEX IF NOT EXISTS idx_carts_user ON carts(user_id);
+	CREATE INDEX IF NOT EXISTS idx_cart_items_cart ON cart_items(cart_id);
+
+	CREATE INDEX IF NOT EXISTS idx_orders_user ON orders(user_id);
+	CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id);
+
+	CREATE INDEX IF NOT EXISTS idx_notifications_org_created ON notifications(organization_id, created_at DESC);
+	CREATE INDEX IF NOT EXISTS idx_notifications_created ON notifications(created_at DESC);
+
+	CREATE INDEX IF NOT EXISTS idx_comments_module ON comments(module_id, created_at DESC);
+
+	CREATE INDEX IF NOT EXISTS idx_course_delete_logs_org ON course_delete_logs(organization_id, deleted_at DESC);
+	CREATE INDEX IF NOT EXISTS idx_course_delete_logs_deleted_at ON course_delete_logs(deleted_at DESC);
+	`
+	if _, err := Pool.Exec(context.Background(), indexes); err != nil {
+		// Don't fatal — indexes are optimisations; log and continue.
+		log.Printf("Index migration warning: %v", err)
+	}
+
 	log.Println("Database schema migrated successfully")
 }

@@ -135,15 +135,59 @@ func ListCourseBundles(c *gin.Context) {
 	defer rows.Close()
 
 	bundles := []models.CourseBundle{}
+	bundleIndex := map[uuid.UUID]int{}
 	for rows.Next() {
 		cb, err := scanCourseBundle(rows)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "could not decode course bundles"})
 			return
 		}
-		loadCourseBundleRelations(ctx, &cb)
+		cb.CourseIDs = []uuid.UUID{}
+		cb.UserIDs = []uuid.UUID{}
+		bundleIndex[cb.ID] = len(bundles)
 		bundles = append(bundles, cb)
 	}
+
+	if len(bundles) == 0 {
+		c.JSON(http.StatusOK, bundles)
+		return
+	}
+
+	// PERF: Avoid N+1 — fetch all course/user relations for all bundles
+	// in this org in TWO queries instead of 2*N.
+	bundleIDs := make([]uuid.UUID, 0, len(bundles))
+	for _, b := range bundles {
+		bundleIDs = append(bundleIDs, b.ID)
+	}
+
+	if courseRows, err := db.Pool.Query(ctx,
+		`SELECT bundle_id, course_id FROM course_bundle_courses WHERE bundle_id = ANY($1)`,
+		bundleIDs); err == nil {
+		defer courseRows.Close()
+		for courseRows.Next() {
+			var bid, cid uuid.UUID
+			if courseRows.Scan(&bid, &cid) == nil {
+				if idx, ok := bundleIndex[bid]; ok {
+					bundles[idx].CourseIDs = append(bundles[idx].CourseIDs, cid)
+				}
+			}
+		}
+	}
+
+	if userRows, err := db.Pool.Query(ctx,
+		`SELECT bundle_id, user_id FROM course_bundle_users WHERE bundle_id = ANY($1)`,
+		bundleIDs); err == nil {
+		defer userRows.Close()
+		for userRows.Next() {
+			var bid, uid uuid.UUID
+			if userRows.Scan(&bid, &uid) == nil {
+				if idx, ok := bundleIndex[bid]; ok {
+					bundles[idx].UserIDs = append(bundles[idx].UserIDs, uid)
+				}
+			}
+		}
+	}
+
 	c.JSON(http.StatusOK, bundles)
 }
 

@@ -13,6 +13,7 @@ import (
 	"bol-lms-server/internal/ws"
 
 	"github.com/gin-contrib/cors"
+	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
 )
 
@@ -65,6 +66,10 @@ func Setup() *gin.Engine {
 	}
 
 	r.Use(cors.New(corsConfig))
+
+	// PERF: Compress JSON/text responses for clients that support it.
+	// Skip the WebSocket upgrade path so it isn't accidentally wrapped.
+	r.Use(gzip.Gzip(gzip.DefaultCompression, gzip.WithExcludedPaths([]string{"/ws/"})))
 
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})

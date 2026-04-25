@@ -104,5 +104,16 @@ export const useAuthStore = create((set) => ({
       error: null,
       initializing: false,
     });
+    // PERF/correctness: clear cached per-user data in other stores so the next
+    // user that logs in doesn't see stale info (and so fetchMyOrg actually
+    // refetches instead of returning the cached object).
+    Promise.all([
+      import('./orgStore').then(({ useOrgStore }) =>
+        useOrgStore.setState({ myOrg: null, orgs: [], adminOrgUsers: [], adminEligibleUsers: [], eligibleUsers: [], unassignedUsers: [] })
+      ),
+      import('./cartStore').then((m) =>
+        (m.default || m.useCartStore).setState({ cart: { items: [] } })
+      ),
+    ]).catch(() => {});
   },
 }));

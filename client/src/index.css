@@ -1,4 +1,6 @@
-@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Inter:wght@300;400;500;600;700&display=swap');
+/* PERF: Fonts are loaded via <link> in index.html with preconnect, which is
+   non-render-blocking and parallel to the JS download. Importing them here as
+   well caused them to be requested twice and delayed first paint. */
 
 @tailwind base;
 @tailwind components;

@@ -8,8 +8,14 @@
     <meta name="description" content="BOL-LMS: A corporate-grade learning management system for modern enterprises. Manage, deploy, and track learning at scale." />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!-- Manrope/Inter use display=swap so text paints immediately with a
+         fallback font while the webfont loads. -->
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
-    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=block" rel="stylesheet" />
+    <!-- PERF: Load the Material Symbols icon font asynchronously (it's ~250 KB
+         and was previously render-blocking). The <noscript> ensures it still
+         loads if JS is disabled. -->
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=swap" media="print" onload="this.media='all'" />
+    <noscript><link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=swap" rel="stylesheet" /></noscript>
   </head>
   <body>
     <div id="root"></div>

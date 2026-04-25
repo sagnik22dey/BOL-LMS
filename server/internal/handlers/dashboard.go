@@ -40,15 +40,19 @@ func GetDashboardStats(c *gin.Context) {
 	if role == string(models.RoleAdmin) || role == string(models.RoleSuperAdmin) {
 		var totalLearners, activeCourses, totalSubmissions, totalAssignments int64
 
-		db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM users WHERE organization_id=$1 AND role='user'`, orgID).Scan(&totalLearners)
-		db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM courses WHERE organization_id=$1`, orgID).Scan(&activeCourses)
-		db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM assignments WHERE organization_id=$1`, orgID).Scan(&totalAssignments)
-		// PERF-002 / QUAL-002: Scope totalSubmissions to this organization only,
-		// by joining through assignments so we only count submissions for this org's assignments.
-		db.Pool.QueryRow(ctx, `
-			SELECT COUNT(*) FROM assignment_submissions sub
-			JOIN assignments a ON sub.assignment_id = a.id
-			WHERE a.organization_id = $1`, orgID).Scan(&totalSubmissions)
+		// PERF: Combine the four scalar counts into a single round trip.
+		err := db.Pool.QueryRow(ctx, `
+			SELECT
+			  (SELECT COUNT(*) FROM users WHERE organization_id=$1 AND role='user'),
+			  (SELECT COUNT(*) FROM courses WHERE organization_id=$1),
+			  (SELECT COUNT(*) FROM assignments WHERE organization_id=$1),
+			  (SELECT COUNT(*) FROM assignment_submissions sub
+			     JOIN assignments a ON sub.assignment_id = a.id
+			     WHERE a.organization_id = $1)
+		`, orgID).Scan(&totalLearners, &activeCourses, &totalAssignments, &totalSubmissions)
+		if err != nil {
+			// Fall through with zeros — the response still renders safely.
+		}
 
 		completionRate := 0
 		if totalAssignments > 0 && totalLearners > 0 {
@@ -58,17 +62,29 @@ func GetDashboardStats(c *gin.Context) {
 			}
 		}
 
-		aRows, _ := db.Pool.Query(ctx,
-			`SELECT id, title, course_id, deadline FROM assignments WHERE organization_id=$1`, orgID)
+		// PERF: Avoid N+1 by computing per-assignment submission counts in one
+		// LEFT JOIN ... GROUP BY query, limited to the most recent assignments
+		// (the dashboard only renders the first 5 anyway).
+		aRows, _ := db.Pool.Query(ctx, `
+			SELECT a.id, a.title, a.course_id, a.deadline,
+			       COALESCE(s.cnt, 0) AS subs
+			FROM assignments a
+			LEFT JOIN (
+			  SELECT assignment_id, COUNT(*) AS cnt
+			  FROM assignment_submissions
+			  GROUP BY assignment_id
+			) s ON s.assignment_id = a.id
+			WHERE a.organization_id = $1
+			ORDER BY a.created_at DESC
+			LIMIT 20`, orgID)
 
 		recentAssignments := []AssignmentDisplay{}
 		if aRows != nil {
 			defer aRows.Close()
 			for aRows.Next() {
 				var a models.Assignment
-				if aRows.Scan(&a.ID, &a.Title, &a.CourseID, &a.Deadline) == nil {
-					var subs int64
-					db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM assignment_submissions WHERE assignment_id=$1`, a.ID).Scan(&subs)
+				var subs int64
+				if aRows.Scan(&a.ID, &a.Title, &a.CourseID, &a.Deadline, &subs) == nil {
 					prog := 0
 					if totalLearners > 0 {
 						prog = int((float64(subs) / float64(totalLearners)) * 100)
@@ -91,6 +107,7 @@ func GetDashboardStats(c *gin.Context) {
 			"completionRate": completionRate,
 			"assignments":    recentAssignments,
 		})
+
 	} else {
 		eRows, _ := db.Pool.Query(ctx,
 			`SELECT id, user_id, course_id, progress, created_at, updated_at FROM enrollments WHERE user_id=$1`, userID)
@@ -124,17 +141,23 @@ func GetDashboardStats(c *gin.Context) {
 
 		recentAssignments := []AssignmentDisplay{}
 		if len(courseIDs) > 0 {
-			assnRows, _ := db.Pool.Query(ctx,
-				`SELECT id, title, course_id, deadline FROM assignments WHERE course_id = ANY($1)`, courseIDs)
+			// PERF: Single LEFT JOIN to fetch each assignment + this user's
+			// submission flag in one round trip (was 1 + N queries).
+			assnRows, _ := db.Pool.Query(ctx, `
+				SELECT a.id, a.title, a.course_id, a.deadline,
+				       (sub.id IS NOT NULL) AS submitted
+				FROM assignments a
+				LEFT JOIN assignment_submissions sub
+				  ON sub.assignment_id = a.id AND sub.user_id = $2
+				WHERE a.course_id = ANY($1)
+				ORDER BY a.created_at DESC
+				LIMIT 20`, courseIDs, userID)
 			if assnRows != nil {
 				defer assnRows.Close()
 				for assnRows.Next() {
 					var a models.Assignment
-					if assnRows.Scan(&a.ID, &a.Title, &a.CourseID, &a.Deadline) == nil {
-						var count int64
-						db.Pool.QueryRow(ctx,
-							`SELECT COUNT(*) FROM assignment_submissions WHERE assignment_id=$1 AND user_id=$2`, a.ID, userID).Scan(&count)
-						submitted := count > 0
+					var submitted bool
+					if assnRows.Scan(&a.ID, &a.Title, &a.CourseID, &a.Deadline, &submitted) == nil {
 						prog := 0
 						if submitted {
 							prog = 100

@@ -76,15 +76,36 @@ func ListOrganizations(c *gin.Context) {
 	defer rows.Close()
 
 	orgs := []models.Organization{}
+	orgIndex := map[uuid.UUID]int{}
 	for rows.Next() {
 		var o models.Organization
 		if err := rows.Scan(&o.ID, &o.Name, &o.Slug, &o.CreatedAt, &o.UpdatedAt); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "could not decode organizations"})
 			return
 		}
-		o.AdminIDs = loadOrgAdminIDs(ctx, o.ID)
+		o.AdminIDs = []uuid.UUID{}
+		orgIndex[o.ID] = len(orgs)
 		orgs = append(orgs, o)
 	}
+
+	// PERF: Avoid N+1 — fetch all org admins in a single query instead of one
+	// per organization.
+	if len(orgs) > 0 {
+		adminRows, err := db.Pool.Query(ctx,
+			`SELECT organization_id, user_id FROM organization_admins`)
+		if err == nil {
+			defer adminRows.Close()
+			for adminRows.Next() {
+				var oid, uid uuid.UUID
+				if adminRows.Scan(&oid, &uid) == nil {
+					if idx, ok := orgIndex[oid]; ok {
+						orgs[idx].AdminIDs = append(orgs[idx].AdminIDs, uid)
+					}
+				}
+			}
+		}
+	}
+
 	c.JSON(http.StatusOK, orgs)
 }
 

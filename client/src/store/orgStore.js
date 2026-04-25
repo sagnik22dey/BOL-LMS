@@ -97,6 +97,10 @@ export const useOrgStore = create((set, get) => ({
   },
 
   fetchMyOrg: async () => {
+    // PERF: Avoid refetching if we already have it. DashboardLayout mounts on
+    // every navigation and was hitting /api/auth/organizations/my repeatedly.
+    const existing = get().myOrg;
+    if (existing) return existing;
     set({ loading: true, error: null });
     try {
       const response = await api.get('/api/auth/organizations/my');
