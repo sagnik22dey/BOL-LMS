@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import axios from 'axios';
 import api from '../../api/axios';
 
-const AssignmentView = ({ assignmentId }) => {
+const AssignmentView = ({ assignmentId, onCompleted }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [assignment, setAssignment] = useState(null);
@@ -95,6 +95,8 @@ const AssignmentView = ({ assignmentId }) => {
       setSubmission(sRes.data);
       setFile(null);
       setUploadProgress(0);
+      // Notify parent that this assignment material is now completed
+      onCompleted?.();
     } catch (err) {
       console.error(err);
       setError('Failed to upload assignment. Please check your connection and try again.');

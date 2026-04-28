@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Link as RouterLink, useNavigate } from 'react-router-dom';
 import { useCourseStore } from '../../store/courseStore';
 import { useAuthStore } from '../../store/authStore';
@@ -153,23 +153,24 @@ const Courses = () => {
   const [deleteConfirm, setDeleteConfirm] = useState(null); // course object to delete
   const [deleting, setDeleting] = useState(false);
 
-  // Collect enrolled course IDs for non-admin users so we can show "Go to Course" instead of "Enroll"
-  const enrolledCourseIds = !isAdmin
-    ? (myEnrollments || []).map((e) => e.course_id)
-    : [];
+  // Memoized: only recalculates when myEnrollments changes — not on every render
+  const enrolledCourseIds = useMemo(
+    () => (!isAdmin ? (myEnrollments || []).map((e) => e.course_id) : []),
+    [isAdmin, myEnrollments]
+  );
 
   useEffect(() => {
     fetchCourses();
     if (!isAdmin) fetchMyLearningCourses();
   }, [fetchCourses, fetchMyLearningCourses, isAdmin]);
 
-  const handleClose = () => {
+  const handleClose = useCallback(() => {
     setOpen(false);
     setFormData({ title: '', description: '', price: 0, currency: 'INR', validity_days: '', instructor_name: '', instructor_bio: '' });
     setFormError('');
-  };
+  }, []);
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = useCallback(async (e) => {
     e.preventDefault();
     setFormError('');
     if (!formData.title || !formData.description) {
@@ -188,13 +189,13 @@ const Courses = () => {
     } else {
       setFormError(useCourseStore.getState().error || 'Failed to create course.');
     }
-  };
+  }, [formData, createCourse, handleClose, navigate]);
 
-  const handleTogglePublish = async (course) => {
+  const handleTogglePublish = useCallback(async (course) => {
     await useCourseStore.getState().updateCourse(course.id, { ...course, is_published: !course.is_published });
-  };
+  }, []);
 
-  const handleDeleteCourse = async () => {
+  const handleDeleteCourse = useCallback(async () => {
     if (!deleteConfirm) return;
     setDeleting(true);
     const success = await deleteCourse(deleteConfirm.id);
@@ -203,12 +204,18 @@ const Courses = () => {
     if (!success) {
       setFormError(useCourseStore.getState().error || 'Failed to delete course.');
     }
-  };
+  }, [deleteConfirm, deleteCourse]);
 
-  const filtered = courses.filter((c) =>
-    c.title.toLowerCase().includes(search.toLowerCase()) ||
-    c.description?.toLowerCase().includes(search.toLowerCase())
-  );
+  // Memoized: only recalculates when courses list or search term changes
+  const filtered = useMemo(() => {
+    const q = search.toLowerCase();
+    if (!q) return courses;
+    return courses.filter(
+      (c) =>
+        c.title.toLowerCase().includes(q) ||
+        c.description?.toLowerCase().includes(q)
+    );
+  }, [courses, search]);
 
   return (
     <div className="max-w-7xl mx-auto space-y-8">

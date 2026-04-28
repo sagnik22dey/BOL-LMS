@@ -49,7 +49,10 @@ const formatTime = (seconds) => {
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-const CustomVideoPlayer = ({ url, onNext, onPrev, hasNext, hasPrev, onEnded, isYouTube }) => {
+// onVideoComplete – fires once when the video reaches the natural end (before any navigation).
+// onEnded        – fires after completion (used for auto-next navigation).
+// onWatched80    – fires once when the user has watched at least 80% of the video.
+const CustomVideoPlayer = ({ url, onNext, onPrev, hasNext, hasPrev, onEnded, onVideoComplete, onWatched80, isYouTube }) => {
   // ── Shared refs ────────────────────────────────────────────────────────────
   const containerRef    = useRef(null);
   const controlsTimeout = useRef(null);
@@ -59,6 +62,16 @@ const CustomVideoPlayer = ({ url, onNext, onPrev, hasNext, hasPrev, onEnded, isY
 
   // ── YouTube refs ───────────────────────────────────────────────────────────
   const ytIframeRef = useRef(null);
+
+  // ── 80%-watched fire-once guards ───────────────────────────────────────────
+  const watched80FiredRef   = useRef(false); // non-YouTube
+  const ytWatched80FiredRef = useRef(false); // YouTube
+
+  // Reset guards whenever the URL (i.e. material) changes
+  useEffect(() => {
+    watched80FiredRef.current   = false;
+    ytWatched80FiredRef.current = false;
+  }, [url]);
 
   // ── Shared UI state ────────────────────────────────────────────────────────
   const [showControls, setShowControls] = useState(true);
@@ -111,6 +124,8 @@ const CustomVideoPlayer = ({ url, onNext, onPrev, hasNext, hasPrev, onEnded, isY
         } else if (data.info === 0) {
           setYtPlaying(false);
           setShowControls(true);
+          // Fire completion callback first, then navigation callback
+          onVideoComplete?.();
           onEnded?.();
         }
       } else if (data.event === 'infoDelivery' && data.info) {
@@ -122,6 +137,18 @@ const CustomVideoPlayer = ({ url, onNext, onPrev, hasNext, hasPrev, onEnded, isY
         }
         if (data.info.volume  !== undefined) setYtVolume(data.info.volume);
         if (data.info.muted   !== undefined) setYtMuted(data.info.muted);
+
+        // 80% auto-complete trigger for YouTube
+        if (
+          !ytWatched80FiredRef.current &&
+          data.info.currentTime !== undefined &&
+          data.info.duration    !== undefined &&
+          data.info.duration > 0 &&
+          data.info.currentTime / data.info.duration >= 0.8
+        ) {
+          ytWatched80FiredRef.current = true;
+          onWatched80?.();
+        }
       }
     };
 
@@ -213,7 +240,16 @@ const CustomVideoPlayer = ({ url, onNext, onPrev, hasNext, hasPrev, onEnded, isY
     if (e) { e.stopPropagation(); e.preventDefault(); }
     setPlaying((p) => !p);
   };
-  const handleProgress = (state) => { if (!seeking) setPlayed(state.played); };
+  const handleProgress = (state) => {
+    if (!seeking) {
+      setPlayed(state.played);
+      // 80% auto-complete trigger for non-YouTube
+      if (!watched80FiredRef.current && state.played >= 0.8) {
+        watched80FiredRef.current = true;
+        onWatched80?.();
+      }
+    }
+  };
   const handleSeekChange = (_e, val) => setPlayed(val);
   const handleSeekMouseDown = () => setSeeking(true);
   const handleSeekMouseUp = (_e, val) => {
@@ -423,7 +459,11 @@ const CustomVideoPlayer = ({ url, onNext, onPrev, hasNext, hasPrev, onEnded, isY
         muted={muted}
         onProgress={handleProgress}
         onDuration={(d) => setDuration(d)}
-        onEnded={onEnded}
+        onEnded={() => {
+          // Fire completion callback first, then navigation
+          onVideoComplete?.();
+          onEnded?.();
+        }}
         config={{
           file: { attributes: { controlsList: 'nodownload' } },
         }}

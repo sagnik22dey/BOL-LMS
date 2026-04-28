@@ -31,10 +31,14 @@ const AssessmentStatus = lazy(() => import('./pages/admin/AssessmentStatus'));
 const CourseBundles = lazy(() => import('./pages/admin/CourseBundles'));
 const Users = lazy(() => import('./pages/admin/Users'));
 const Courses = lazy(() => import('./pages/admin/Courses'));
+const CourseAPIKeys = lazy(() => import('./pages/admin/CourseAPIKeys'));
 
 const MyLearning = lazy(() => import('./pages/learning/MyLearning'));
 const CourseView = lazy(() => import('./pages/learning/CourseView'));
 const Cart = lazy(() => import('./pages/learning/Cart'));
+
+const NotificationsList = lazy(() => import('./pages/notifications/NotificationsList'));
+const NotificationDetail = lazy(() => import('./pages/notifications/NotificationDetail'));
 
 function FullScreenLoader() {
   return (
@@ -103,6 +107,7 @@ function App() {
                   <Route path="/dashboard/courses/builder/:courseId?" element={<CourseBuilder />} />
                   <Route path="/dashboard/courses/:courseId/assessments" element={<AssessmentStatus />} />
                   <Route path="/dashboard/course-bundles" element={<CourseBundles />} />
+                  <Route path="/dashboard/api-keys" element={<CourseAPIKeys />} />
                 </Route>
 
                 {/* Shared Admin/SuperAdmin Routes */}
@@ -120,6 +125,12 @@ function App() {
                   <Route path="/dashboard/learning" element={<MyLearning />} />
                   <Route path="/dashboard/learning/:courseId" element={<CourseView />} />
                   <Route path="/dashboard/cart" element={<Cart />} />
+                </Route>
+
+                {/* Notifications — accessible to all authenticated roles */}
+                <Route element={<ProtectedRoute />}>
+                  <Route path="/dashboard/notifications" element={<NotificationsList />} />
+                  <Route path="/dashboard/notifications/:id" element={<NotificationDetail />} />
                 </Route>
               </Route>
             </Route>

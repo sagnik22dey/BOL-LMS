@@ -6,3 +6,4 @@ export { default as Users } from './Users';
 export { default as CourseBundles } from './CourseBundles';
 export { default as Analytics } from './Analytics';
 export { default as AssessmentStatus } from './AssessmentStatus';
+export { default as CourseAPIKeys } from './CourseAPIKeys';

@@ -292,9 +292,9 @@ func ListCourseContent(c *gin.Context) {
 // ListMyAssignmentFiles returns a listing of the authenticated student's own
 // assignment files for a specific course.
 //
-// GET /api/learning/courses/:id/my-assignments
+// GET /api/learning/courses/:courseId/my-assignments
 func ListMyAssignmentFiles(c *gin.Context) {
-	courseID, err := uuid.Parse(c.Param("id"))
+	courseID, err := uuid.Parse(c.Param("courseId"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid course id"})
 		return

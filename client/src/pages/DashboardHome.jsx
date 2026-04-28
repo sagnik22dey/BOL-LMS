@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useAuthStore } from '../store/authStore';
 import NotificationsFeed from '../components/NotificationsFeed';
 import api from '../api/axios';
@@ -39,10 +39,19 @@ const ProgressBar = ({ name, progress, color }) => (
 
 const DashboardHome = () => {
   const { user } = useAuthStore();
-  const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
-  const displayName = user?.name || user?.email || 'User';
-  const hour = new Date().getHours();
-  const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+  const isAdmin = useMemo(
+    () => user?.role === 'admin' || user?.role === 'super_admin',
+    [user?.role]
+  );
+  const displayName = useMemo(
+    () => user?.name || user?.email || 'User',
+    [user?.name, user?.email]
+  );
+  // Memoized: the greeting won't change during a session
+  const greeting = useMemo(() => {
+    const h = new Date().getHours();
+    return h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
+  }, []);
 
   const [stats, setStats] = useState(null);
 

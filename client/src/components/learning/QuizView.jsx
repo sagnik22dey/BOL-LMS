@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import api from '../../api/axios';
 
-const QuizView = ({ quizId }) => {
+const QuizView = ({ quizId, onCompleted }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [quiz, setQuiz] = useState(null);
@@ -68,13 +68,15 @@ const QuizView = ({ quizId }) => {
       setTimeLeft(null);
       setCurrentQ(0);
       setShowReview(false);
+      // Notify parent that this quiz material is now completed
+      onCompleted?.();
     } catch (err) {
       console.error(err);
       setError('Failed to submit quiz. Please try again.');
     } finally {
       setIsSubmitting(false);
     }
-  }, [isSubmitting, answers, quizId]);
+  }, [isSubmitting, answers, quizId, onCompleted]);
 
   useEffect(() => {
     let timer;

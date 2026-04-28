@@ -126,6 +126,15 @@ func Setup() *gin.Engine {
 		admin.POST("/users/:id/courses", handlers.AssignCourseToUser)
 		admin.DELETE("/users/:id/courses/:courseId", handlers.RevokeCourseFromUser)
 		admin.GET("/users/:id/courses", handlers.GetUserIndividualCourses)
+
+		// Third-party API key management (scoped per course)
+		admin.POST("/courses/:id/api-keys", handlers.GenerateCourseAPIKey)
+		admin.GET("/courses/:id/api-keys", handlers.ListCourseAPIKeys)
+		admin.DELETE("/api-keys/:keyId", handlers.RevokeAPIKey)
+
+		// Learning goals management
+		admin.POST("/learning-goals", handlers.AssignLearningGoal)
+		admin.DELETE("/learning-goals/:goalId", handlers.DeleteLearningGoal)
 	}
 
 	// Shared user management for Admin and SuperAdmin
@@ -184,9 +193,17 @@ func Setup() *gin.Engine {
 		studentCourses.GET("/h-presign-get", handlers.GenerateHierarchicalPresignGet)
 		studentCourses.POST("/h-presign-put", handlers.GenerateStudentHierarchicalPresignPut)
 		// List the authenticated student's own assignment files for a course
-		studentCourses.GET("/courses/:id/my-assignments", handlers.ListMyAssignmentFiles)
+		studentCourses.GET("/courses/:courseId/my-assignments", handlers.ListMyAssignmentFiles)
 		studentCourses.POST("/enroll", handlers.EnrollUser)
 		studentCourses.GET("/my-courses", handlers.ListMyEnrollments)
+
+		// Material completion tracking
+		studentCourses.POST("/complete", handlers.MarkMaterialComplete)
+		studentCourses.DELETE("/complete", handlers.UnmarkMaterialComplete)
+		studentCourses.GET("/courses/:courseId/progress", handlers.GetCourseProgress)
+
+		// Learning goals (read-only for learners)
+		studentCourses.GET("/goals", handlers.GetMyLearningGoals)
 	}
 
 	payments := api.Group("/payments")
@@ -219,13 +236,28 @@ func Setup() *gin.Engine {
 	notifications := api.Group("/notifications")
 	notifications.Use(middleware.AuthRequired())
 	{
+		// Legacy broadcast announcements (org-scoped, admin-created)
 		notifications.GET("", handlers.GetLatestNotifications)
+
+		// Per-user event notifications
+		notifications.GET("/my", handlers.GetMyNotifications)
+		notifications.GET("/unread-count", handlers.GetUnreadCount)
+		notifications.POST("/mark-all-read", handlers.MarkAllNotificationsRead)
+		notifications.GET("/:id", handlers.GetNotificationByID)
+		notifications.PATCH("/:id/read", handlers.MarkNotificationRead)
 	}
 
 	dashboard := api.Group("/dashboard")
 	dashboard.Use(middleware.AuthRequired())
 	{
 		dashboard.GET("/stats", handlers.GetDashboardStats)
+	}
+
+	// External provisioning endpoint — authenticated by X-API-Key header only,
+	// no JWT required. Called by third-party websites after a purchase.
+	external := api.Group("/external")
+	{
+		external.POST("/provision", handlers.ProvisionCourseAccess)
 	}
 
 	// WebSocket endpoint — SEC-002: require authentication before upgrading the connection

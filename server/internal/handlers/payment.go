@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -145,6 +146,76 @@ func DummyCheckout(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "checkout failed: could not commit transaction"})
 		return
 	}
+
+	// 7. Fire purchase notifications asynchronously (after successful commit)
+	go func() {
+		bgCtx := context.Background()
+
+		// Collect item names for the notification message
+		var itemNames []string
+		for _, item := range orderItems {
+			var itemTitle string
+			if item.ItemType == "course" {
+				db.Pool.QueryRow(bgCtx, `SELECT title FROM courses WHERE id=$1`, item.ItemID).Scan(&itemTitle)
+			} else if item.ItemType == "bundle" {
+				db.Pool.QueryRow(bgCtx, `SELECT name FROM course_bundles WHERE id=$1`, item.ItemID).Scan(&itemTitle)
+			}
+			if itemTitle == "" {
+				itemTitle = item.ItemType
+			}
+			itemNames = append(itemNames, "\""+itemTitle+"\"")
+		}
+
+		var itemsSummary string
+		if len(itemNames) == 1 {
+			itemsSummary = itemNames[0]
+		} else if len(itemNames) > 1 {
+			itemsSummary = fmt.Sprintf("%s and %d more", itemNames[0], len(itemNames)-1)
+		} else {
+			itemsSummary = "your items"
+		}
+
+		oid := orderID
+
+		// Notify the purchasing user
+		CreateUserNotification(bgCtx, NotifyInput{
+			RecipientID:       userID,
+			RecipientRole:     models.NotifRoleUser,
+			Title:             "Purchase Confirmed",
+			Message:           fmt.Sprintf("Your purchase of %s has been confirmed. You can access your content from My Learning.", itemsSummary),
+			ShortSummary:      "Purchase confirmed: " + itemsSummary,
+			Type:              "success",
+			Category:          models.NotifCategoryPurchase,
+			RelatedEntityID:   &oid,
+			RelatedEntityType: "order",
+		})
+
+		// Determine the user's org to notify the right admins
+		var userOrgID *uuid.UUID
+		db.Pool.QueryRow(bgCtx, `SELECT organization_id FROM users WHERE id=$1`, userID).Scan(&userOrgID)
+		if userOrgID != nil {
+			NotifyAdminsOfOrg(bgCtx, *userOrgID, NotifyInput{
+				Title:             "New Purchase",
+				Message:           fmt.Sprintf("A user in your organization purchased %s.", itemsSummary),
+				ShortSummary:      "User purchased: " + itemsSummary,
+				Type:              "success",
+				Category:          models.NotifCategoryPurchase,
+				RelatedEntityID:   &oid,
+				RelatedEntityType: "order",
+			})
+		}
+
+		// Notify super admins
+		NotifySuperAdmins(bgCtx, NotifyInput{
+			Title:             "New Purchase Recorded",
+			Message:           fmt.Sprintf("A user completed a purchase of %s.", itemsSummary),
+			ShortSummary:      "Purchase: " + itemsSummary,
+			Type:              "success",
+			Category:          models.NotifCategoryPurchase,
+			RelatedEntityID:   &oid,
+			RelatedEntityType: "order",
+		})
+	}()
 
 	c.JSON(http.StatusOK, gin.H{
 		"message":  "checkout successful",

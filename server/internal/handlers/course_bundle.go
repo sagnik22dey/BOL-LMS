@@ -502,6 +502,53 @@ func AssignCourseToUser(c *gin.Context) {
 			 VALUES ($1, $2, $3, $4, $5) ON CONFLICT (user_id, course_id) DO NOTHING`,
 			uuid.New(), userID, courseID, assignedBy, time.Now(),
 		)
+
+		// Fetch course title for notification message
+		var courseTitle string
+		db.Pool.QueryRow(ctx, `SELECT title FROM courses WHERE id=$1`, courseID).Scan(&courseTitle)
+		if courseTitle == "" {
+			courseTitle = cidStr
+		}
+
+		cid := courseID // capture loop var
+		go func(cid uuid.UUID, title string) {
+			bgCtx := context.Background()
+
+			// Notify the user
+			CreateUserNotification(bgCtx, NotifyInput{
+				RecipientID:       userID,
+				RecipientRole:     models.NotifRoleUser,
+				Title:             "New Course Assigned",
+				Message:           "You have been assigned the course: " + title + ". You can start learning right away.",
+				ShortSummary:      "Course assigned: " + title,
+				Type:              "info",
+				Category:          models.NotifCategoryCourseAssignment,
+				RelatedEntityID:   &cid,
+				RelatedEntityType: "course",
+			})
+
+			// Notify all admins of this org
+			NotifyAdminsOfOrg(bgCtx, adminOrgID, NotifyInput{
+				Title:             "Course Assigned to User",
+				Message:           "Course \"" + title + "\" was assigned to a user in your organization.",
+				ShortSummary:      "Course \"" + title + "\" assigned to a user",
+				Type:              "success",
+				Category:          models.NotifCategoryCourseAssignment,
+				RelatedEntityID:   &cid,
+				RelatedEntityType: "course",
+			})
+
+			// Notify all super admins
+			NotifySuperAdmins(bgCtx, NotifyInput{
+				Title:             "Course Assigned",
+				Message:           "Course \"" + title + "\" was assigned to a user by an admin.",
+				ShortSummary:      "Course \"" + title + "\" assigned by admin",
+				Type:              "info",
+				Category:          models.NotifCategoryCourseAssignment,
+				RelatedEntityID:   &cid,
+				RelatedEntityType: "course",
+			})
+		}(cid, courseTitle)
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "courses assigned successfully"})

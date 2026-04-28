@@ -1,39 +1,60 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import api from '../api/axios';
 import { useAuthStore } from '../store/authStore';
+import useNotificationStore from '../store/notificationStore';
 
+// ── Type config shared with popup ─────────────────────────────────────────────
 const TYPE_CONFIG = {
-  warning: { icon: 'warning', bg: '#fff3e0', color: '#e65100' },
-  success: { icon: 'check_circle', bg: '#e6f4ea', color: '#1e7e34' },
-  info: { icon: 'info', bg: '#e8f0fe', color: '#1565c0' },
+  warning: { icon: 'warning',       bg: '#fff3e0', color: '#e65100' },
+  success: { icon: 'check_circle',  bg: '#e6f4ea', color: '#1e7e34' },
+  info:    { icon: 'info',          bg: '#e8f0fe', color: '#1565c0' },
 };
 
-const inputClass = "w-full px-3 py-2 border border-[var(--outline)] rounded-xl bg-[var(--surface-low)] text-[var(--text-primary)] text-sm outline-none focus:border-[var(--primary)] focus:ring-2 focus:ring-[var(--primary)]/20 transition-all";
+const CATEGORY_LABEL = {
+  course_assignment: 'Course Assigned',
+  purchase:          'Purchase',
+  general:           'Announcement',
+};
 
+function timeAgo(dateStr) {
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(dateStr).toLocaleDateString();
+}
+
+const inputClass =
+  'w-full px-3 py-2 border border-[var(--outline)] rounded-xl bg-[var(--surface-low)] text-[var(--text-primary)] text-sm outline-none focus:border-[var(--primary)] focus:ring-2 focus:ring-[var(--primary)]/20 transition-all';
+
+// ── Component ─────────────────────────────────────────────────────────────────
 const NotificationsFeed = () => {
+  const navigate = useNavigate();
   const { token, user } = useAuthStore();
-  const [notifications, setNotifications] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const {
+    notifications,
+    loading: storeLoading,
+    fetchNotifications,
+    markRead,
+    markAllRead,
+    unreadCount,
+  } = useNotificationStore();
+
+  const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
+
+  // ── Legacy announcement creation (admin only) ──────────────────────────────
   const [open, setOpen] = useState(false);
   const [newNotif, setNewNotif] = useState({ title: '', message: '', type: 'info' });
   const [creating, setCreating] = useState(false);
-  const isAdmin = user?.role === 'admin' || user?.role === 'super_admin';
 
-  const fetchNotifications = async () => {
-    try {
-      setLoading(true);
-      const res = await api.get('/api/notifications');
-      setNotifications(res.data);
-      setError(null);
-    } catch {
-      setError('Failed to load notifications');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => { if (token) fetchNotifications(); }, [token]);
+  useEffect(() => {
+    if (token) fetchNotifications();
+  }, [token, fetchNotifications]);
 
   const handleCreate = async () => {
     try {
@@ -43,96 +64,221 @@ const NotificationsFeed = () => {
       setNewNotif({ title: '', message: '', type: 'info' });
       fetchNotifications();
     } catch {
-      alert('Failed to create notification');
+      alert('Failed to create announcement');
     } finally {
       setCreating(false);
     }
   };
 
+  const handleItemClick = async (notif) => {
+    if (!notif.is_read) await markRead(notif.id);
+    navigate(`/dashboard/notifications/${notif.id}`);
+  };
+
+  const handleMarkRead = async (e, notif) => {
+    e.stopPropagation();
+    await markRead(notif.id);
+  };
+
   return (
     <>
       <div className="bg-[var(--surface-lowest)] rounded-2xl shadow-[var(--shadow-sm)] h-full flex flex-col">
+        {/* Header */}
         <div className="px-5 pt-5 pb-3 flex justify-between items-center border-b border-[var(--outline)]">
           <div>
-            <h3 className="font-bold text-base text-[var(--text-primary)]" style={{ letterSpacing: '-0.3px' }}>Announcements</h3>
-            <p className="text-xs text-[var(--text-secondary)]">Latest platform updates</p>
+            <div className="flex items-center gap-2">
+              <h3
+                className="font-bold text-base text-[var(--text-primary)]"
+                style={{ letterSpacing: '-0.3px' }}
+              >
+                Notifications
+              </h3>
+              {unreadCount > 0 && (
+                <span className="inline-flex items-center justify-center px-1.5 py-0.5 text-[10px] font-bold bg-red-500 text-white rounded-full min-w-[18px]">
+                  {unreadCount > 99 ? '99+' : unreadCount}
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-[var(--text-secondary)]">Your latest updates &amp; events</p>
           </div>
-          {isAdmin && (
-            <button
-              onClick={() => setOpen(true)}
-              className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[var(--primary)] text-white text-xs font-bold hover:bg-[var(--primary-dark)] transition-colors"
-            >
-              <span className="material-symbols-outlined text-sm">add</span>
-              New
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            {unreadCount > 0 && (
+              <button
+                onClick={markAllRead}
+                className="text-[11px] font-bold text-[var(--primary)] hover:underline"
+              >
+                Mark all read
+              </button>
+            )}
+            {isAdmin && (
+              <button
+                onClick={() => setOpen(true)}
+                className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[var(--primary)] text-white text-xs font-bold hover:bg-[var(--primary-dark)] transition-colors"
+              >
+                <span className="material-symbols-outlined text-sm">add</span>
+                New
+              </button>
+            )}
+          </div>
         </div>
 
+        {/* Notification list */}
         <div className="flex-1 overflow-y-auto max-h-[420px]">
-          {loading ? (
+          {storeLoading ? (
             <div className="flex items-center justify-center p-8">
-              <div className="w-7 h-7 border-3 border-[var(--primary)] border-t-transparent rounded-full animate-spin" />
+              <div className="w-7 h-7 border-2 border-[var(--primary)] border-t-transparent rounded-full animate-spin" />
             </div>
-          ) : error ? (
-            <div className="m-3 px-4 py-3 rounded-xl bg-[#fdecea] border border-[#f5c6c6] text-[#ba1a1a] text-sm">{error}</div>
           ) : notifications.length === 0 ? (
             <div className="p-8 text-center text-[var(--text-secondary)]">
-              <span className="material-symbols-outlined text-4xl opacity-20 block mb-2">notifications</span>
-              <p className="text-sm">No announcements yet</p>
+              <span className="material-symbols-outlined text-4xl opacity-20 block mb-2">
+                notifications
+              </span>
+              <p className="text-sm">No notifications yet</p>
             </div>
           ) : (
             <div className="divide-y divide-[var(--outline)]">
               {notifications.map((notif) => {
                 const conf = TYPE_CONFIG[notif.type] || TYPE_CONFIG.info;
+                const isUnread = !notif.is_read;
                 return (
-                  <div key={notif.id} className="flex items-start gap-3 px-5 py-3.5 hover:bg-[var(--surface)] transition-colors">
-                    <div className="p-1.5 rounded-lg flex-shrink-0 mt-0.5" style={{ backgroundColor: conf.bg, color: conf.color }}>
+                  <div
+                    key={notif.id}
+                    onClick={() => handleItemClick(notif)}
+                    className={`flex items-start gap-3 px-5 py-3.5 cursor-pointer transition-colors group
+                      ${isUnread
+                        ? 'bg-blue-50/30 hover:bg-blue-50/60'
+                        : 'hover:bg-[var(--surface)] opacity-75'
+                      }`}
+                  >
+                    {/* Unread dot */}
+                    <div className="flex-shrink-0 mt-2">
+                      {isUnread ? (
+                        <span className="w-2 h-2 rounded-full bg-red-500 inline-block" />
+                      ) : (
+                        <span className="w-2 h-2 rounded-full inline-block" />
+                      )}
+                    </div>
+
+                    {/* Type icon */}
+                    <div
+                      className="p-1.5 rounded-lg flex-shrink-0 mt-0.5"
+                      style={{ backgroundColor: conf.bg, color: conf.color }}
+                    >
                       <span className="material-symbols-outlined text-base">{conf.icon}</span>
                     </div>
+
+                    {/* Content */}
                     <div className="flex-1 min-w-0">
                       <div className="flex justify-between items-start gap-2 mb-0.5">
-                        <span className="text-sm font-bold text-[var(--text-primary)] truncate">{notif.title}</span>
-                        <span className="text-xs text-[var(--text-secondary)] flex-shrink-0">{new Date(notif.created_at).toLocaleDateString()}</span>
+                        <span
+                          className={`text-sm truncate ${
+                            isUnread
+                              ? 'font-bold text-[var(--text-primary)]'
+                              : 'font-medium text-[var(--text-secondary)]'
+                          }`}
+                        >
+                          {notif.title}
+                        </span>
+                        <span className="text-xs text-[var(--text-secondary)] flex-shrink-0">
+                          {timeAgo(notif.created_at)}
+                        </span>
                       </div>
-                      <p className="text-xs text-[var(--text-secondary)] leading-relaxed">{notif.message}</p>
+                      <p className="text-xs text-[var(--text-secondary)] leading-relaxed line-clamp-1">
+                        {notif.short_summary || notif.message}
+                      </p>
+                      {notif.category && (
+                        <span className="inline-block text-[10px] font-bold uppercase tracking-wide text-[var(--text-secondary)] mt-1">
+                          {CATEGORY_LABEL[notif.category] || notif.category}
+                        </span>
+                      )}
                     </div>
+
+                    {/* Mark read button on hover (unread only) */}
+                    {isUnread && (
+                      <button
+                        onClick={(e) => handleMarkRead(e, notif)}
+                        title="Mark as read"
+                        className="flex-shrink-0 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-blue-100 transition-all"
+                      >
+                        <span className="material-symbols-outlined text-sm text-blue-500">done</span>
+                      </button>
+                    )}
                   </div>
                 );
               })}
             </div>
           )}
         </div>
+
+        {/* Footer — View All */}
+        {notifications.length > 0 && (
+          <div className="border-t border-[var(--outline)] px-5 py-3">
+            <button
+              onClick={() => navigate('/dashboard/notifications')}
+              className="w-full text-center text-xs font-bold text-[var(--primary)] hover:underline"
+            >
+              View all notifications
+            </button>
+          </div>
+        )}
       </div>
 
-      {/* Create Notification Modal */}
+      {/* ── Admin: Create Announcement Modal ───────────────────────────────── */}
       {open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
           <div className="bg-[var(--surface-lowest)] rounded-2xl shadow-[var(--shadow-xl)] w-full max-w-md">
             <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--outline)]">
-              <h3 className="font-bold text-lg text-[var(--text-primary)] font-headline">New Announcement</h3>
-              <button onClick={() => setOpen(false)} className="text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
+              <h3 className="font-bold text-lg text-[var(--text-primary)] font-headline">
+                New Announcement
+              </h3>
+              <button
+                onClick={() => setOpen(false)}
+                className="text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+              >
                 <span className="material-symbols-outlined">close</span>
               </button>
             </div>
             <div className="px-6 py-5 flex flex-col gap-4">
               <div className="flex flex-col gap-1.5">
                 <label className="text-sm font-semibold text-[var(--text-primary)]">Title</label>
-                <input required className={inputClass} placeholder="Announcement title" value={newNotif.title} onChange={(e) => setNewNotif({ ...newNotif, title: e.target.value })} />
+                <input
+                  required
+                  className={inputClass}
+                  placeholder="Announcement title"
+                  value={newNotif.title}
+                  onChange={(e) => setNewNotif({ ...newNotif, title: e.target.value })}
+                />
               </div>
               <div className="flex flex-col gap-1.5">
                 <label className="text-sm font-semibold text-[var(--text-primary)]">Message</label>
-                <textarea required rows={3} className={inputClass + ' resize-none'} placeholder="Write your message…" value={newNotif.message} onChange={(e) => setNewNotif({ ...newNotif, message: e.target.value })} />
+                <textarea
+                  required
+                  rows={3}
+                  className={inputClass + ' resize-none'}
+                  placeholder="Write your message…"
+                  value={newNotif.message}
+                  onChange={(e) => setNewNotif({ ...newNotif, message: e.target.value })}
+                />
               </div>
               <div className="flex flex-col gap-1.5">
                 <label className="text-sm font-semibold text-[var(--text-primary)]">Type</label>
-                <select className={inputClass} value={newNotif.type} onChange={(e) => setNewNotif({ ...newNotif, type: e.target.value })}>
+                <select
+                  className={inputClass}
+                  value={newNotif.type}
+                  onChange={(e) => setNewNotif({ ...newNotif, type: e.target.value })}
+                >
                   <option value="info">Info</option>
                   <option value="success">Success</option>
                   <option value="warning">Warning</option>
                 </select>
               </div>
               <div className="flex gap-3 justify-end pt-1">
-                <button onClick={() => setOpen(false)} className="px-4 py-2 rounded-xl text-sm font-semibold text-[var(--text-secondary)] hover:bg-[var(--surface-high)] transition-colors">Cancel</button>
+                <button
+                  onClick={() => setOpen(false)}
+                  className="px-4 py-2 rounded-xl text-sm font-semibold text-[var(--text-secondary)] hover:bg-[var(--surface-high)] transition-colors"
+                >
+                  Cancel
+                </button>
                 <button
                   onClick={handleCreate}
                   disabled={!newNotif.title || !newNotif.message || creating}

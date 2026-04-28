@@ -220,6 +220,24 @@ func migrate() {
 
 	// Safely add new columns to existing deployments
 	alterSchema := `
+	CREATE TABLE IF NOT EXISTS user_notifications (
+		id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		recipient_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		recipient_role TEXT NOT NULL DEFAULT 'user',
+		title TEXT NOT NULL,
+		message TEXT NOT NULL,
+		short_summary TEXT NOT NULL DEFAULT '',
+		type TEXT NOT NULL DEFAULT 'info',
+		category TEXT NOT NULL DEFAULT 'general',
+		is_read BOOLEAN NOT NULL DEFAULT FALSE,
+		related_entity_id UUID,
+		related_entity_type TEXT NOT NULL DEFAULT '',
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_user_notifications_recipient ON user_notifications(recipient_id, created_at DESC);
+	CREATE INDEX IF NOT EXISTS idx_user_notifications_unread ON user_notifications(recipient_id, is_read);
+
 	CREATE TABLE IF NOT EXISTS user_organizations (
 		user_id UUID REFERENCES users(id) ON DELETE CASCADE,
 		organization_id UUID REFERENCES organizations(id) ON DELETE CASCADE,
@@ -252,6 +270,49 @@ func migrate() {
 		deleted_by_email TEXT NOT NULL DEFAULT '',
 		deleted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 	);
+
+	-- Third-party course API keys for external purchase integrations
+	CREATE TABLE IF NOT EXISTS course_api_keys (
+		id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+		course_id UUID NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+		key TEXT NOT NULL UNIQUE,
+		label TEXT NOT NULL DEFAULT '',
+		is_active BOOLEAN NOT NULL DEFAULT TRUE,
+		created_by UUID NOT NULL REFERENCES users(id),
+		revoked_at TIMESTAMPTZ,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_course_api_keys_key ON course_api_keys(key);
+	CREATE INDEX IF NOT EXISTS idx_course_api_keys_course ON course_api_keys(course_id);
+
+	-- Per-material completion tracking. Replaces the opaque enrollment.progress float
+	-- which was never updated. Each row = one user has completed one material item.
+	CREATE TABLE IF NOT EXISTS material_completions (
+		id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+		user_id     UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		course_id   UUID        NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+		module_id   UUID        NOT NULL,
+		material_id UUID        NOT NULL,
+		completed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		UNIQUE(user_id, material_id)
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_material_completions_user_course ON material_completions(user_id, course_id);
+	CREATE INDEX IF NOT EXISTS idx_material_completions_user_mat   ON material_completions(user_id, material_id);
+
+	-- Learning goals assigned by admins to users (optional target completion date)
+	CREATE TABLE IF NOT EXISTS learning_goals (
+		id          UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+		user_id     UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		course_id   UUID        NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+		assigned_by UUID        NOT NULL REFERENCES users(id),
+		target_date TIMESTAMPTZ,
+		created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		UNIQUE(user_id, course_id)
+	);
+
+	CREATE INDEX IF NOT EXISTS idx_learning_goals_user ON learning_goals(user_id);
 	`
 	if _, err := Pool.Exec(context.Background(), alterSchema); err != nil {
 		log.Fatalf("Alter schema failed: %v", err)

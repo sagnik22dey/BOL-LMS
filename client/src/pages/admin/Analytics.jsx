@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import api from '../../api/axios';
 import { useAuthStore } from '../../store/authStore';
 import { useCourseStore } from '../../store/courseStore';
@@ -87,10 +87,10 @@ const UserCourseRow = ({ user }) => {
                       <div className="w-20 h-1.5 bg-[var(--outline)] rounded-full overflow-hidden">
                         <div
                           className="h-full rounded-full bg-[#1e7e34]"
-                          style={{ width: `${Math.min(Math.round(ac.progress * 100), 100)}%` }}
+                          style={{ width: `${Math.min(Math.round(ac.progress), 100)}%` }}
                         />
                       </div>
-                      <span className="text-[var(--text-secondary)]">{Math.round(ac.progress * 100)}%</span>
+                      <span className="text-[var(--text-secondary)]">{Math.round(ac.progress)}%</span>
                     </div>
                   </td>
                   <td className="py-2 pr-3">
@@ -209,24 +209,35 @@ const Analytics = () => {
 
   useEffect(() => {
     if (!token) return;
-    const fetch = async () => {
+    // Run both requests in parallel — no need for one to wait on the other
+    const loadAll = async () => {
+      setLoading(true);
       try {
-        setLoading(true);
-        const res = await api.get('/api/admin/super/analytics');
-        setData(res.data);
+        const [analyticsRes] = await Promise.all([
+          api.get('/api/admin/super/analytics'),
+          fetchCourseDeleteLogs(isSuperAdmin),
+        ]);
+        setData(analyticsRes.data);
         setError(null);
-      } catch { setError('Failed to load analytics.'); }
-      finally { setLoading(false); }
+      } catch {
+        setError('Failed to load analytics.');
+      } finally {
+        setLoading(false);
+      }
     };
-    fetch();
-    fetchCourseDeleteLogs(isSuperAdmin);
+    loadAll();
   }, [token, fetchCourseDeleteLogs, isSuperAdmin]);
 
-  const totalCourseAssignments = data?.organizations?.reduce(
-    (sum, org) => sum + (org.users || []).reduce(
-      (s, u) => s + (u.assigned_courses?.length || 0), 0
-    ), 0
-  ) || 0;
+  // Memoized: only recalculates when the organizations data changes
+  const totalCourseAssignments = useMemo(
+    () =>
+      data?.organizations?.reduce(
+        (sum, org) =>
+          sum + (org.users || []).reduce((s, u) => s + (u.assigned_courses?.length || 0), 0),
+        0
+      ) || 0,
+    [data?.organizations]
+  );
 
   if (loading) return (
     <div className="flex items-center justify-center min-h-[50vh]">

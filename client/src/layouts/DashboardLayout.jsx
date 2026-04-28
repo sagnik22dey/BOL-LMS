@@ -1,8 +1,10 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Outlet, useNavigate, useLocation, Link as RouterLink } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import { useOrgStore } from '../store/orgStore';
 import useCartStore from '../store/cartStore';
+import useNotificationStore from '../store/notificationStore';
+import NotificationPopup from '../components/NotificationPopup';
 
 const DashboardLayout = () => {
   const { user, logout } = useAuthStore();
@@ -14,16 +16,28 @@ const DashboardLayout = () => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [avatarMenuOpen, setAvatarMenuOpen] = useState(false);
   const [myOrg, setMyOrg] = useState(null);
-  
+
   const avatarRef = useRef(null);
+  const notifBellRef = useRef(null);
+
+  const {
+    unreadCount,
+    popupOpen,
+    togglePopup,
+    setPopupOpen,
+    startPolling,
+    stopPolling,
+    fetchNotifications,
+  } = useNotificationStore();
 
   const isCourseView = /^\/dashboard\/learning\/[^/]+$/.test(location.pathname);
 
-  // Close mobile menu on route change
+  // Close menus on route change
   useEffect(() => {
     setMobileMenuOpen(false);
     setAvatarMenuOpen(false);
-  }, [location.pathname]);
+    setPopupOpen(false);
+  }, [location.pathname, setPopupOpen]);
 
   useEffect(() => {
     if (user && user.role !== 'super_admin') {
@@ -36,6 +50,15 @@ const DashboardLayout = () => {
       fetchCart();
     }
   }, [user, fetchCart]);
+
+  // Start polling for unread count when user is authenticated
+  useEffect(() => {
+    if (user) {
+      fetchNotifications();
+      startPolling();
+    }
+    return () => stopPolling();
+  }, [user, fetchNotifications, startPolling, stopPolling]);
 
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -57,36 +80,50 @@ const DashboardLayout = () => {
     return () => { document.body.style.overflow = ''; };
   }, [mobileMenuOpen]);
 
-  const handleLogout = () => {
+  const handleLogout = useCallback(() => {
+    stopPolling();
     logout();
     navigate('/');
-  };
+  }, [stopPolling, logout, navigate]);
 
-  const menuItems = [
-    { text: 'Dashboard', path: '/dashboard' },
-  ];
+  // Memoized: only rebuilds when the user's role changes
+  const menuItems = useMemo(() => {
+    const items = [{ text: 'Dashboard', path: '/dashboard' }];
+    if (user?.role === 'super_admin') {
+      items.push({ text: 'Analytics', path: '/dashboard/analytics' });
+      items.push({ text: 'Organizations', path: '/dashboard/organizations' });
+      items.push({ text: 'All Users', path: '/dashboard/users' });
+    } else if (user?.role === 'admin') {
+      items.push({ text: 'My Organization', path: '/dashboard/my-organization' });
+      items.push({ text: 'Courses', path: '/dashboard/courses' });
+      items.push({ text: 'Users', path: '/dashboard/users' });
+      items.push({ text: 'Course Bundles', path: '/dashboard/course-bundles' });
+      items.push({ text: 'API Keys', path: '/dashboard/api-keys' });
+    } else {
+      items.push({ text: 'My Learning', path: '/dashboard/learning' });
+      items.push({ text: 'Courses', path: '/dashboard/courses' });
+    }
+    return items;
+  }, [user?.role]);
 
-  if (user?.role === 'super_admin') {
-    menuItems.push({ text: 'Analytics', path: '/dashboard/analytics' });
-    menuItems.push({ text: 'Organizations', path: '/dashboard/organizations' });
-    menuItems.push({ text: 'All Users', path: '/dashboard/users' });
-  } else if (user?.role === 'admin') {
-    menuItems.push({ text: 'My Organization', path: '/dashboard/my-organization' });
-    menuItems.push({ text: 'Courses', path: '/dashboard/courses' });
-    menuItems.push({ text: 'Users', path: '/dashboard/users' });
-    menuItems.push({ text: 'Course Bundles', path: '/dashboard/course-bundles' });
-  } else {
-    menuItems.push({ text: 'My Learning', path: '/dashboard/learning' });
-    menuItems.push({ text: 'Courses', path: '/dashboard/courses' });
-  }
+  // Memoized: only recalculates when user changes
+  const userInitial = useMemo(
+    () => user?.name?.charAt(0)?.toUpperCase() || user?.email?.charAt(0)?.toUpperCase() || 'U',
+    [user?.name, user?.email]
+  );
+  const displayName = useMemo(
+    () => user?.name || user?.email || 'User',
+    [user?.name, user?.email]
+  );
 
-  const userInitial = user?.name?.charAt(0)?.toUpperCase() || user?.email?.charAt(0)?.toUpperCase() || 'U';
-  const displayName = user?.name || user?.email || 'User';
-
-  const isActive = (path) => {
-    if (path === '/dashboard') return location.pathname === '/dashboard';
-    return location.pathname.startsWith(path);
-  };
+  // Memoized: only recalculates when the pathname changes
+  const isActive = useCallback(
+    (path) => {
+      if (path === '/dashboard') return location.pathname === '/dashboard';
+      return location.pathname.startsWith(path);
+    },
+    [location.pathname]
+  );
 
   return (
     <div className="bg-background text-on-surface font-body min-h-screen selection:bg-primary-container selection:text-on-primary-container">
@@ -101,8 +138,8 @@ const DashboardLayout = () => {
             {!isCourseView && (
               <div className="hidden lg:flex items-center gap-8 font-headline text-sm font-semibold tracking-tight">
                 {menuItems.map((item) => (
-                  <RouterLink 
-                    key={item.text} 
+                  <RouterLink
+                    key={item.text}
                     to={item.path}
                     className={`transition-colors duration-200 pb-1 ${isActive(item.path) ? 'text-primary border-b-2 border-primary' : 'text-on-surface-variant hover:text-primary'}`}
                   >
@@ -120,9 +157,26 @@ const DashboardLayout = () => {
               </span>
             )}
 
-            {/* Notifications - always accessible via mobile menu */}
-            <button className="material-symbols-outlined text-on-surface hover:bg-surface-container-low p-2 rounded-full transition-colors hidden sm:block">notifications</button>
-            
+            {/* Notification Bell — always visible on sm+ */}
+            <div className="relative hidden sm:block" ref={notifBellRef}>
+              <button
+                onClick={() => togglePopup()}
+                className="relative material-symbols-outlined text-on-surface hover:bg-surface-container-low p-2 rounded-full transition-colors"
+                aria-label="Notifications"
+              >
+                notifications
+                {/* Red dot for unread notifications */}
+                {unreadCount > 0 && (
+                  <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-white pointer-events-none" />
+                )}
+              </button>
+
+              {/* Notification popup anchored to bell */}
+              {popupOpen && (
+                <NotificationPopup onClose={() => setPopupOpen(false)} />
+              )}
+            </div>
+
             {/* Cart - accessible via mobile menu on small screens */}
             {user?.role === 'user' && (
               <RouterLink to="/dashboard/cart" className="relative p-2 text-on-surface hover:bg-surface-container-low rounded-full transition-colors hidden sm:block">
@@ -136,7 +190,7 @@ const DashboardLayout = () => {
             )}
 
             <div className="relative" ref={avatarRef}>
-              <button 
+              <button
                 onClick={() => setAvatarMenuOpen(!avatarMenuOpen)}
                 className="flex items-center gap-2 hover:bg-surface-container-low p-1 pr-3 rounded-full transition-colors"
               >
@@ -158,8 +212,7 @@ const DashboardLayout = () => {
                     {myOrg && <p className="text-xs text-primary font-bold mt-1 uppercase tracking-wider">{myOrg.name}</p>}
                   </div>
                   <div className="p-2 space-y-1">
-                    {/* Always show logout in avatar dropdown */}
-                    <button 
+                    <button
                       onClick={handleLogout}
                       className="w-full flex items-center gap-3 px-3 py-2 text-sm font-bold text-error hover:bg-error-container/50 rounded-lg transition-colors"
                     >
@@ -172,7 +225,7 @@ const DashboardLayout = () => {
             </div>
 
             {/* Hamburger — opens full mobile drawer */}
-            <button 
+            <button
                onClick={() => setMobileMenuOpen(true)}
                className="lg:hidden material-symbols-outlined p-2 hover:bg-surface-container-low rounded-full transition-colors"
                aria-label="Open navigation menu"
@@ -242,10 +295,22 @@ const DashboardLayout = () => {
           {/* Notifications & Cart in mobile menu */}
           <p className="px-3 py-1 text-[10px] font-black tracking-widest uppercase text-outline mb-2">Quick Actions</p>
           <div className="space-y-1">
-            <button className="flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-bold text-on-surface hover:bg-surface-container-low transition-colors w-full text-left">
-              <span className="material-symbols-outlined text-on-surface-variant text-xl">notifications</span>
+            <RouterLink
+              to="/dashboard/notifications"
+              onClick={() => setMobileMenuOpen(false)}
+              className="flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-bold text-on-surface hover:bg-surface-container-low transition-colors w-full text-left"
+            >
+              <span className="relative">
+                <span className="material-symbols-outlined text-on-surface-variant text-xl">notifications</span>
+                {unreadCount > 0 && (
+                  <span className="absolute -top-1 -right-1 w-2 h-2 bg-red-500 rounded-full border border-white" />
+                )}
+              </span>
               Notifications
-            </button>
+              {unreadCount > 0 && (
+                <span className="ml-auto text-xs bg-red-500 text-white rounded-full px-2 py-0.5 font-bold">{unreadCount}</span>
+              )}
+            </RouterLink>
 
             {user?.role === 'user' && (
               <RouterLink
@@ -272,7 +337,7 @@ const DashboardLayout = () => {
 
         {/* Sign out at bottom */}
         <div className="p-4 border-t border-surface-dim">
-          <button 
+          <button
             onClick={handleLogout}
             className="w-full flex items-center gap-3 px-3 py-3 text-sm font-bold text-error hover:bg-error-container/50 rounded-xl transition-colors"
           >
